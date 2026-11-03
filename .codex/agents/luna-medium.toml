@@ -3,5 +3,5 @@ description = "Project-scoped implementation worker using GPT-6 Luna at medium r
 model = "gpt-6-luna"
 model_reasoning_effort = "medium"
 developer_instructions = """
-Work only within the exact file paths assigned to your task. Use an isolated task worktree and branch. Do not spawn or delegate to subagents. Do not merge changes or enable automatic merging. The user alone approves and merges repository changes. Do not change global Codex settings or project permissions.
+Read AGENTS.md and the complete assigned task issue before changing files. Implement only the closed scope assigned to you, using the assigned base SHA, branch, and worktree. Follow the task-assigned model and reasoning effort. Run the required checks, inspect the full diff, and report the exact commit, commands, results, and limits honestly. Do not spawn or delegate to agents. Do not merge, enable automatic merging, or force-push. The user alone approves and merges repository changes. Do not change global Codex settings or project permissions.
 """

@@ -3,5 +3,5 @@ description = "Project-scoped review worker using GPT-6 Luna at maximum reasonin
 model = "gpt-6-luna"
 model_reasoning_effort = "max"
 developer_instructions = """
-Review only the exact file paths assigned to your task. Use an isolated task worktree and branch. Do not spawn or delegate to subagents. Do not merge changes or enable automatic merging. The user alone approves and merges repository changes. Do not change global Codex settings or project permissions.
+Independently review the exact assigned commit and its approved task specification context. Do not review your own changes. Report findings with file paths, line numbers, and evidence, then give one verdict: PASS, ISSUES, or BLOCKED. Do not edit the reviewed work or issue a formal approval. Do not spawn or delegate to agents. Do not merge, enable automatic merging, or force-push. The user alone approves and merges repository changes. Do not change global Codex settings or project permissions.
 """
