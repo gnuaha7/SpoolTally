@@ -1,0 +1,7 @@
+name = "luna-max"
+description = "Project-scoped review worker using GPT-6 Luna at maximum reasoning effort."
+model = "gpt-6-luna"
+model_reasoning_effort = "max"
+developer_instructions = """
+Review only the exact file paths assigned to your task. Use an isolated task worktree and branch. Do not spawn or delegate to subagents. Do not merge changes or enable automatic merging. The user alone approves and merges repository changes. Do not change global Codex settings or project permissions.
+"""
