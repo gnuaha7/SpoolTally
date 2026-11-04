@@ -1,5 +1,6 @@
 import ipaddress
 import os
+import stat
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -15,6 +16,31 @@ class Settings:
         return self.data_dir / "spooltally.sqlite3"
 
 
+def _resolve_data_dir(configured_data_dir: str) -> Path:
+    try:
+        data_dir = Path(configured_data_dir).expanduser().resolve()
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise ValueError("Invalid configuration.") from exc
+
+    ancestor = data_dir
+    while True:
+        try:
+            mode = ancestor.stat().st_mode
+        except (FileNotFoundError, NotADirectoryError):
+            parent = ancestor.parent
+            if parent == ancestor:
+                raise ValueError("Invalid configuration.") from None
+            ancestor = parent
+            continue
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise ValueError("Invalid configuration.") from exc
+
+        if not stat.S_ISDIR(mode):
+            raise ValueError("Invalid configuration.")
+        break
+    return data_dir
+
+
 def load_settings(
     data_dir: str | None = None,
     host: str | None = None,
@@ -26,7 +52,7 @@ def load_settings(
         if data_dir is not None
         else os.environ.get("SPOOLTALLY_DATA_DIR", "~/.local/share/spooltally")
     )
-    resolved_data_dir = Path(configured_data_dir).expanduser().resolve()
+    resolved_data_dir = _resolve_data_dir(configured_data_dir)
     if include_server:
         resolved_host = (
             host if host is not None else os.environ.get("SPOOLTALLY_HOST", "127.0.0.1")

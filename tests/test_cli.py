@@ -9,9 +9,51 @@ from pathlib import Path
 from types import ModuleType
 
 import httpx
+import pytest
 
 from spooltally.cli import CliError, main
 from spooltally.config import Settings, load_settings
+
+
+@pytest.fixture
+def invalid_data_dirs(tmp_path: Path) -> dict[str, str]:
+    regular_file = tmp_path / "regular-file"
+    regular_file.write_text("not a directory")
+    symlink_loop = tmp_path / "symlink-loop"
+    symlink_loop.symlink_to(symlink_loop)
+    return {
+        "unknown_home_user": "~spooltally_missing_user_97431/data",
+        "data_dir_is_file": str(regular_file),
+        "data_dir_below_file": str(regular_file / "data"),
+        "data_dir_symlink_loop": str(symlink_loop),
+    }
+
+
+@pytest.mark.parametrize("command", (("init",), ("tokens", "list"), ("serve",)))
+@pytest.mark.parametrize(
+    "input_class",
+    (
+        "unknown_home_user",
+        "data_dir_is_file",
+        "data_dir_below_file",
+        "data_dir_symlink_loop",
+    ),
+)
+def test_invalid_data_directory_is_safe_invalid_input(
+    run_cli,
+    invalid_data_dirs: dict[str, str],
+    command: tuple[str, ...],
+    input_class: str,
+) -> None:
+    path = invalid_data_dirs[input_class]
+    result = run_cli(*command, "--data-dir", path)
+
+    assert result.returncode == 2
+    assert result.stdout == ""
+    assert result.stderr == (
+        '{"error":{"code":"invalid_input","message":"Invalid configuration."}}\n'
+    )
+    assert path not in result.stderr
 
 
 def test_help_exits_before_data_access(run_cli) -> None:
@@ -25,7 +67,7 @@ def test_help_exits_before_data_access(run_cli) -> None:
 def test_init_reports_schema_pending_and_creates_sqlite_file(
     run_cli, tmp_path: Path
 ) -> None:
-    data_dir = tmp_path / "local data"
+    data_dir = tmp_path / "new" / "nested" / "local data"
 
     result = run_cli("init", "--data-dir", str(data_dir))
 
