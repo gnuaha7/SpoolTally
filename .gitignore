@@ -49,3 +49,5 @@ Thumbs.db
 *.swp
 *.swo
 *~
+
+*.egg-info/
