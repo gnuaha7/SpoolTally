@@ -1,8 +1,10 @@
 import argparse
 import importlib
 import importlib.util
+import io
 import json
 import os
+import socket
 import sys
 from collections.abc import Sequence
 from copy import deepcopy
@@ -60,12 +62,40 @@ def _error(error: CliError) -> int:
     return error.exit_code
 
 
-def _settings(args: argparse.Namespace) -> Settings:
+class _StartupLogBuffer(io.TextIOBase):
+    def __init__(self, limit: int = 65536) -> None:
+        self._limit = limit
+        self._buffer: list[str] = []
+        self._size = 0
+        self._released = False
+
+    def write(self, value: str) -> int:
+        if self._released:
+            return sys.stderr.write(value)
+        remaining = self._limit - self._size
+        if remaining > 0:
+            retained = value[:remaining]
+            self._buffer.append(retained)
+            self._size += len(retained)
+        return len(value)
+
+    def flush(self) -> None:
+        if self._released:
+            sys.stderr.flush()
+
+    def release(self) -> None:
+        sys.stderr.write("".join(self._buffer))
+        self._buffer.clear()
+        self._released = True
+
+
+def _settings(args: argparse.Namespace, *, include_server: bool) -> Settings:
     try:
         return load_settings(
             data_dir=getattr(args, "data_dir", None),
             host=getattr(args, "host", None),
             port=getattr(args, "port", None),
+            include_server=include_server,
         )
     except (OSError, ValueError) as exc:
         raise CliError("invalid_input", "Invalid configuration.", 2) from exc
@@ -153,7 +183,7 @@ def _tokens(args: argparse.Namespace, settings: Settings) -> int:
 def main(argv: Sequence[str] | None = None) -> int:
     try:
         args = _parser().parse_args(argv)
-        settings = _settings(args)
+        settings = _settings(args, include_server=args.command == "serve")
         if args.command == "init":
             return _init(settings)
         if args.command == "tokens":
@@ -166,16 +196,37 @@ def main(argv: Sequence[str] | None = None) -> int:
         os.environ["SPOOLTALLY_DATA_DIR"] = str(settings.data_dir)
         os.environ["SPOOLTALLY_HOST"] = settings.host
         os.environ["SPOOLTALLY_PORT"] = str(settings.port)
+        startup_logs = _StartupLogBuffer()
         log_config = deepcopy(uvicorn.config.LOGGING_CONFIG)
-        log_config["handlers"]["default"]["stream"] = "ext://sys.stderr"
-        log_config["handlers"]["access"]["stream"] = "ext://sys.stderr"
-        uvicorn.run(
+        log_config["handlers"]["default"]["stream"] = startup_logs
+        log_config["handlers"]["access"]["stream"] = startup_logs
+        config = uvicorn.Config(
             "spooltally.api.app:create_app",
             factory=True,
             host=settings.host,
             port=settings.port,
             log_config=log_config,
         )
+
+        class CliServer(uvicorn.Server):
+            async def startup(
+                self, sockets: list[socket.socket] | None = None
+            ) -> None:
+                await super().startup(sockets=sockets)
+                if self.started:
+                    startup_logs.release()
+
+        server = CliServer(config)
+        try:
+            server.run()
+        except SystemExit as exc:
+            if exc.code == 0:
+                raise
+            raise CliError(
+                "startup_failed", "SpoolTally could not start", 1
+            ) from exc
+        if not server.started:
+            raise CliError("startup_failed", "SpoolTally could not start", 1)
         return 0
     except CliError as exc:
         return _error(exc)

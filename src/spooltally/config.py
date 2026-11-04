@@ -19,6 +19,7 @@ def load_settings(
     data_dir: str | None = None,
     host: str | None = None,
     port: str | None = None,
+    include_server: bool = True,
 ) -> Settings:
     configured_data_dir = (
         data_dir
@@ -26,12 +27,16 @@ def load_settings(
         else os.environ.get("SPOOLTALLY_DATA_DIR", "~/.local/share/spooltally")
     )
     resolved_data_dir = Path(configured_data_dir).expanduser().resolve()
-    resolved_host = (
-        host if host is not None else os.environ.get("SPOOLTALLY_HOST", "127.0.0.1")
-    )
-    resolved_port = (
-        port if port is not None else os.environ.get("SPOOLTALLY_PORT", "8000")
-    )
+    if include_server:
+        resolved_host = (
+            host if host is not None else os.environ.get("SPOOLTALLY_HOST", "127.0.0.1")
+        )
+        resolved_port = (
+            port if port is not None else os.environ.get("SPOOLTALLY_PORT", "8000")
+        )
+    else:
+        resolved_host = host if host is not None else "127.0.0.1"
+        resolved_port = port if port is not None else "8000"
 
     if resolved_host != "localhost":
         try:

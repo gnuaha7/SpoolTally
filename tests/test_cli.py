@@ -48,6 +48,56 @@ def test_init_reports_schema_pending_and_creates_sqlite_file(
     assert ((data_dir / "spooltally.sqlite3").stat().st_mode & 0o777) == 0o600
 
 
+def test_init_ignores_invalid_server_environment(run_cli, tmp_path: Path) -> None:
+    data_dir = tmp_path / "offline"
+    env = os.environ.copy()
+    env["SPOOLTALLY_HOST"] = "example.invalid"
+    env["SPOOLTALLY_PORT"] = "not-a-port"
+
+    result = run_cli("init", "--data-dir", str(data_dir), env=env)
+
+    assert result.returncode == 0
+    assert result.stdout == json.dumps(
+        {
+            "data_dir": str(data_dir.resolve()),
+            "database_path": str((data_dir / "spooltally.sqlite3").resolve()),
+            "schema_status": "pending",
+        },
+        separators=(",", ":"),
+    ) + "\n"
+    assert result.stderr == ""
+    assert (data_dir / "spooltally.sqlite3").is_file()
+
+
+def test_serve_occupied_port_returns_safe_startup_error(
+    run_cli, tmp_path: Path
+) -> None:
+    data_dir = tmp_path / "initialized"
+    initialized = run_cli("init", "--data-dir", str(data_dir))
+    assert initialized.returncode == 0
+
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        port = listener.getsockname()[1]
+        result = run_cli(
+            "serve",
+            "--data-dir",
+            str(data_dir),
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(port),
+        )
+
+    assert result.returncode == 1
+    assert result.stdout == ""
+    assert result.stderr == (
+        '{"error":{"code":"startup_failed",'
+        '"message":"SpoolTally could not start"}}\n'
+    )
+
+
 def test_serve_missing_database_returns_safe_error(run_cli, tmp_path: Path) -> None:
     result = run_cli("serve", "--data-dir", str(tmp_path / "missing"))
 
