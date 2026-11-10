@@ -64,7 +64,7 @@ def test_help_exits_before_data_access(run_cli) -> None:
     assert result.stderr == ""
 
 
-def test_init_reports_schema_pending_and_creates_sqlite_file(
+def test_init_reports_schema_current_and_creates_sqlite_file(
     run_cli, tmp_path: Path
 ) -> None:
     data_dir = tmp_path / "new" / "nested" / "local data"
@@ -78,7 +78,7 @@ def test_init_reports_schema_pending_and_creates_sqlite_file(
             {
                 "data_dir": str(data_dir.resolve()),
                 "database_path": str((data_dir / "spooltally.sqlite3").resolve()),
-                "schema_status": "pending",
+                "schema_status": "current",
             },
             separators=(",", ":"),
         )
@@ -103,7 +103,7 @@ def test_init_ignores_invalid_server_environment(run_cli, tmp_path: Path) -> Non
         {
             "data_dir": str(data_dir.resolve()),
             "database_path": str((data_dir / "spooltally.sqlite3").resolve()),
-            "schema_status": "pending",
+            "schema_status": "current",
         },
         separators=(",", ":"),
     ) + "\n"
