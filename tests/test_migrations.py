@@ -176,53 +176,79 @@ def test_movement_triggers_allow_changes_only_in_transactional_restore_mode(tmp_
     settings = Settings(tmp_path, "127.0.0.1", 8000)
     initialize_database(settings)
     engine = create_engine(settings.database_path)
+    manufacturer_id = "11111111-1111-4111-8111-111111111111"
+    filament_id = "22222222-2222-4222-8222-222222222222"
+    spool_id = "33333333-3333-4333-8333-333333333333"
+    movement_id = "44444444-4444-4444-8444-444444444444"
+    occurred_at = "2026-11-10T19:00:00Z"
+    spool_snapshot = (
+        '{"archived_at":null,"created_at":"2026-11-10T19:00:00Z",'
+        '"filament_id":"22222222-2222-4222-8222-222222222222",'
+        '"id":"33333333-3333-4333-8333-333333333333","initial_mg":100,'
+        '"location_id":null,"notes":"","price_eur_cents":null,"remaining_mg":100,'
+        '"revision":1,"tare_mg":null,"updated_at":"2026-11-10T19:00:00Z"}'
+    )
     with engine.begin() as connection:
         connection.execute(
             text(
                 "INSERT INTO local_manufacturers "
-                "(id,name,created_at,updated_at) VALUES "
-                "('maker','Maker','now','now')"
-            )
+                "(id,name,created_at,updated_at) "
+                "VALUES (:id,'Maker',:at,:at)"
+            ),
+            {"id": manufacturer_id, "at": occurred_at},
         )
         connection.execute(
             text(
                 "INSERT INTO local_filaments "
-                "(id,manufacturer_id,name,created_at,updated_at) VALUES "
-                "('filament','maker','PLA','now','now')"
-            )
+                "(id,manufacturer_id,name,created_at,updated_at) "
+                "VALUES (:id,:manufacturer_id,'PLA',:at,:at)"
+            ),
+            {"id": filament_id, "manufacturer_id": manufacturer_id, "at": occurred_at},
         )
         connection.execute(
             text(
                 "INSERT INTO spools "
                 "(id,filament_id,initial_mg,remaining_mg,created_at,updated_at) "
-                "VALUES ('spool','filament',100,100,'now','now')"
-            )
+                "VALUES (:id,:filament_id,100,100,:at,:at)"
+            ),
+            {"id": spool_id, "filament_id": filament_id, "at": occurred_at},
         )
         connection.execute(
             text(
                 "INSERT INTO movements "
                 "(id,spool_id,kind,occurred_at,after_json) "
-                "VALUES ('movement','spool','created','now','{}')"
-            )
+                "VALUES (:id,:spool_id,'created',:at,:snapshot)"
+            ),
+            {
+                "id": movement_id,
+                "spool_id": spool_id,
+                "at": occurred_at,
+                "snapshot": spool_snapshot,
+            },
         )
     with engine.connect() as connection:
         with pytest.raises(Exception, match="movement_append_only"):
             connection.execute(
-                text("UPDATE movements SET occurred_at='later' WHERE id='movement'")
+                text("UPDATE movements SET occurred_at='later' WHERE id=:id"),
+                {"id": movement_id},
             )
         connection.rollback()
         transaction = connection.begin()
         set_restore_mode(connection, "restore")
         connection.execute(
-            text("UPDATE movements SET occurred_at='restored' WHERE id='movement'")
+            text("UPDATE movements SET occurred_at='restored' WHERE id=:id"),
+            {"id": movement_id},
         )
-        connection.execute(text("DELETE FROM movements WHERE id='movement'"))
+        connection.execute(
+            text("DELETE FROM movements WHERE id=:id"), {"id": movement_id}
+        )
         transaction.rollback()
         assert (
             connection.execute(
-                text("SELECT occurred_at FROM movements WHERE id='movement'")
+                text("SELECT occurred_at FROM movements WHERE id=:id"),
+                {"id": movement_id},
             ).scalar_one()
-            == "now"
+            == occurred_at
         )
         assert (
             connection.execute(
