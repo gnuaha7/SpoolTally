@@ -27,8 +27,10 @@ CREATE TABLE catalog_records (
 	PRIMARY KEY (id),
 	UNIQUE (kind, identity_key),
 	UNIQUE (upstream_uuid),
-	CHECK (kind IN ('brand','material','filament','variant','size','store','purchase_link')),
-	CHECK (json_valid(source_baseline_json) AND json_type(source_baseline_json) = 'object'),
+	CHECK (kind IN
+	('brand','material','filament','variant','size','store','purchase_link')),
+	CHECK (json_valid(source_baseline_json) AND json_type(source_baseline_json) =
+	'object'),
 	CHECK (json_valid(typed_fields_json) AND json_type(typed_fields_json) = 'object'),
 	CHECK (json_valid(extension_json) AND json_type(extension_json) = 'object'),
 	CHECK (json_valid(raw_json) AND json_type(raw_json) = 'object'),
@@ -58,7 +60,8 @@ CREATE TABLE catalog_runs (
 
 """)
     op.execute(
-        """CREATE UNIQUE INDEX uq_catalog_runs_running ON catalog_runs (status) WHERE status = 'running'"""
+        """CREATE UNIQUE INDEX uq_catalog_runs_running
+        ON catalog_runs (status) WHERE status = 'running'"""
     )
     op.execute("""
 CREATE TABLE catalog_schedule_state (
@@ -217,8 +220,10 @@ CREATE TABLE local_filaments (
 	CHECK (length(name) BETWEEN 1 AND 120),
 	CHECK (trim(name) = name),
 	CHECK (revision >= 1),
-	CHECK (default_tare_mg IS NULL OR (typeof(default_tare_mg) = 'integer' AND default_tare_mg >= 0)),
-	CHECK (nominal_weight_mg IS NULL OR (typeof(nominal_weight_mg) = 'integer' AND nominal_weight_mg >= 0)),
+	CHECK (default_tare_mg IS NULL OR (typeof(default_tare_mg) = 'integer' AND
+	default_tare_mg >= 0)),
+	CHECK (nominal_weight_mg IS NULL OR (typeof(nominal_weight_mg) = 'integer' AND
+	nominal_weight_mg >= 0)),
 	CHECK (json_valid(presentation_json) AND json_type(presentation_json) = 'object'),
 	FOREIGN KEY(manufacturer_id) REFERENCES local_manufacturers (id) ON DELETE RESTRICT,
 	FOREIGN KEY(source_filament_id) REFERENCES catalog_records (id) ON DELETE RESTRICT,
@@ -239,21 +244,26 @@ CREATE TABLE assets (
 	blob BLOB NOT NULL,
 	PRIMARY KEY (id),
 	CHECK (length(sha256) = 32),
-	CHECK ((source_record_id IS NOT NULL) + (local_manufacturer_id IS NOT NULL) + (local_filament_id IS NOT NULL) = 1),
+	CHECK ((source_record_id IS NOT NULL) + (local_manufacturer_id IS NOT NULL) +
+	(local_filament_id IS NOT NULL) = 1),
 	FOREIGN KEY(source_record_id) REFERENCES catalog_records (id) ON DELETE RESTRICT,
-	FOREIGN KEY(local_manufacturer_id) REFERENCES local_manufacturers (id) ON DELETE RESTRICT,
+	FOREIGN KEY(local_manufacturer_id) REFERENCES local_manufacturers (id) ON DELETE
+	RESTRICT,
 	FOREIGN KEY(local_filament_id) REFERENCES local_filaments (id) ON DELETE RESTRICT
 )
 
 """)
     op.execute(
-        """CREATE UNIQUE INDEX uq_assets_source_record ON assets (source_record_id) WHERE source_record_id IS NOT NULL"""
+        """CREATE UNIQUE INDEX uq_assets_source_record
+        ON assets (source_record_id) WHERE source_record_id IS NOT NULL"""
     )
     op.execute(
-        """CREATE UNIQUE INDEX uq_assets_local_manufacturer ON assets (local_manufacturer_id) WHERE local_manufacturer_id IS NOT NULL"""
+        """CREATE UNIQUE INDEX uq_assets_local_manufacturer
+        ON assets (local_manufacturer_id) WHERE local_manufacturer_id IS NOT NULL"""
     )
     op.execute(
-        """CREATE UNIQUE INDEX uq_assets_local_filament ON assets (local_filament_id) WHERE local_filament_id IS NOT NULL"""
+        """CREATE UNIQUE INDEX uq_assets_local_filament
+        ON assets (local_filament_id) WHERE local_filament_id IS NOT NULL"""
     )
     op.execute("""
 CREATE TABLE source_field_overrides (
@@ -287,7 +297,8 @@ CREATE TABLE spools (
 	CHECK (tare_mg IS NULL OR (typeof(tare_mg) = 'integer' AND tare_mg >= 0)),
 	CHECK (typeof(initial_mg) = 'integer' AND initial_mg > 0),
 	CHECK (typeof(remaining_mg) = 'integer' AND remaining_mg >= 0),
-	CHECK (price_eur_cents IS NULL OR (typeof(price_eur_cents) = 'integer' AND price_eur_cents >= 0)),
+	CHECK (price_eur_cents IS NULL OR (typeof(price_eur_cents) = 'integer' AND
+	price_eur_cents >= 0)),
 	CHECK (revision >= 1),
 	FOREIGN KEY(filament_id) REFERENCES local_filaments (id) ON DELETE RESTRICT,
 	FOREIGN KEY(location_id) REFERENCES locations (id) ON DELETE RESTRICT
@@ -306,20 +317,30 @@ CREATE TABLE movements (
 	before_json TEXT,
 	after_json TEXT NOT NULL,
 	PRIMARY KEY (id),
-	CHECK (kind IN ('created','edited','archived','restored','consumed','weighed','measured','relocated')),
+	CHECK (kind IN
+	('created','edited','archived','restored','consumed','weighed','measured','relocated')),
 	CHECK (amount_mg IS NULL OR amount_mg > 0),
-	CHECK ((kind = 'created' AND before_json IS NULL AND after_json IS NOT NULL) OR (kind <> 'created' AND before_json IS NOT NULL AND after_json IS NOT NULL)),
-	CHECK ((kind = 'consumed' AND amount_mg IS NOT NULL AND reason IS NOT NULL AND length(trim(reason)) BETWEEN 1 AND 500) OR (kind <> 'consumed' AND amount_mg IS NULL)),
+	CHECK ((kind = 'created' AND before_json IS NULL AND after_json IS NOT NULL) OR
+	(kind <> 'created' AND before_json IS NOT NULL AND after_json IS NOT NULL)),
+		CHECK ((kind = 'consumed' AND amount_mg IS NOT NULL AND reason IS NOT NULL AND
+		length(trim(reason)) BETWEEN 1 AND 500) OR
+		(kind <> 'consumed' AND amount_mg IS NULL)),
 	CHECK (amount_mg IS NULL OR (typeof(amount_mg) = 'integer' AND amount_mg > 0)),
 	FOREIGN KEY(spool_id) REFERENCES spools (id) ON DELETE RESTRICT
 )
 
 """)
     op.execute(
-        """CREATE TRIGGER movements_no_update BEFORE UPDATE ON movements WHEN (SELECT mode FROM restore_control WHERE id=1) != 'restore' BEGIN SELECT RAISE(ABORT, 'movement_append_only'); END"""
+        """CREATE TRIGGER movements_no_update
+        BEFORE UPDATE ON movements
+        WHEN (SELECT mode FROM restore_control WHERE id=1) != 'restore'
+        BEGIN SELECT RAISE(ABORT, 'movement_append_only'); END"""
     )
     op.execute(
-        """CREATE TRIGGER movements_no_delete BEFORE DELETE ON movements WHEN (SELECT mode FROM restore_control WHERE id=1) != 'restore' BEGIN SELECT RAISE(ABORT, 'movement_append_only'); END"""
+        """CREATE TRIGGER movements_no_delete
+        BEFORE DELETE ON movements
+        WHEN (SELECT mode FROM restore_control WHERE id=1) != 'restore'
+        BEGIN SELECT RAISE(ABORT, 'movement_append_only'); END"""
     )
 
 

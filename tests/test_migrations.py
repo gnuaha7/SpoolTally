@@ -107,7 +107,8 @@ def test_backup_failure_prevents_migration_and_data_change(tmp_path, monkeypatch
         assert database.execute("SELECT value FROM legacy").fetchone() == ("before",)
         assert (
             database.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='catalog_records'"
+                "SELECT name FROM sqlite_master WHERE type='table' "
+                "AND name='catalog_records'"
             ).fetchone()
             is None
         )
@@ -136,7 +137,8 @@ def test_failed_migration_rolls_back_schema_and_keeps_verified_backup(
         assert database.execute("SELECT value FROM legacy").fetchone() == ("before",)
         assert (
             database.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='catalog_records'"
+                "SELECT name FROM sqlite_master WHERE type='table' "
+                "AND name='catalog_records'"
             ).fetchone()
             is None
         )
@@ -177,22 +179,30 @@ def test_movement_triggers_allow_changes_only_in_transactional_restore_mode(tmp_
     with engine.begin() as connection:
         connection.execute(
             text(
-                "INSERT INTO local_manufacturers (id,name,created_at,updated_at) VALUES ('maker','Maker','now','now')"
+                "INSERT INTO local_manufacturers "
+                "(id,name,created_at,updated_at) VALUES "
+                "('maker','Maker','now','now')"
             )
         )
         connection.execute(
             text(
-                "INSERT INTO local_filaments (id,manufacturer_id,name,created_at,updated_at) VALUES ('filament','maker','PLA','now','now')"
+                "INSERT INTO local_filaments "
+                "(id,manufacturer_id,name,created_at,updated_at) VALUES "
+                "('filament','maker','PLA','now','now')"
             )
         )
         connection.execute(
             text(
-                "INSERT INTO spools (id,filament_id,initial_mg,remaining_mg,created_at,updated_at) VALUES ('spool','filament',100,100,'now','now')"
+                "INSERT INTO spools "
+                "(id,filament_id,initial_mg,remaining_mg,created_at,updated_at) "
+                "VALUES ('spool','filament',100,100,'now','now')"
             )
         )
         connection.execute(
             text(
-                "INSERT INTO movements (id,spool_id,kind,occurred_at,after_json) VALUES ('movement','spool','created','now','{}')"
+                "INSERT INTO movements "
+                "(id,spool_id,kind,occurred_at,after_json) "
+                "VALUES ('movement','spool','created','now','{}')"
             )
         )
     with engine.connect() as connection:
@@ -239,7 +249,8 @@ def test_init_persists_reduced_fraction_and_invalid_cli_value_has_no_effect(
     with engine.connect() as connection:
         assert connection.execute(
             text(
-                "SELECT low_stock_numerator, low_stock_denominator FROM inventory_settings WHERE id=1"
+                "SELECT low_stock_numerator, low_stock_denominator "
+                "FROM inventory_settings WHERE id=1"
             )
         ).one() == (1, 8)
     engine.dispose()
@@ -255,7 +266,8 @@ def test_init_persists_reduced_fraction_and_invalid_cli_value_has_no_effect(
     with engine.connect() as connection:
         assert connection.execute(
             text(
-                "SELECT low_stock_numerator, low_stock_denominator FROM inventory_settings WHERE id=1"
+                "SELECT low_stock_numerator, low_stock_denominator "
+                "FROM inventory_settings WHERE id=1"
             )
         ).one() == (1, 8)
     engine.dispose()
