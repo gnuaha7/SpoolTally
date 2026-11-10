@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import re
 import sqlite3
+import sys
 import uuid
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
@@ -18,6 +19,13 @@ from spooltally.config import Settings
 from spooltally.db.session import create_engine
 
 MODES = {"normal", "restore"}
+
+
+def _alembic_config_path() -> Path:
+    source_config = Path(__file__).resolve().parents[3] / "alembic.ini"
+    if source_config.is_file():
+        return source_config
+    return Path(sys.prefix) / "share" / "spooltally" / "alembic.ini"
 
 
 def set_restore_mode(connection: Connection, mode: str) -> None:
@@ -180,7 +188,7 @@ def initialize_database(settings: Settings) -> None:
         ) as connection:
             transaction = connection.begin()
             try:
-                cfg = Config(str(Path(__file__).resolve().parents[3] / "alembic.ini"))
+                cfg = Config(str(_alembic_config_path()))
                 cfg.attributes["connection"] = connection
                 script = __import__(
                     "alembic.script", fromlist=["ScriptDirectory"]
