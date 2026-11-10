@@ -27,8 +27,12 @@ class CanonicalJSON(TypeDecorator[Any]):
     impl = Text
     cache_ok = True
 
+    def __init__(self, *, none_as_null: bool = True) -> None:
+        super().__init__()
+        self.none_as_null = none_as_null
+
     def process_bind_param(self, value: Any, dialect: Any) -> str | None:
-        if value is None:
+        if value is None and self.none_as_null:
             return None
         return json.dumps(
             value,
@@ -66,8 +70,8 @@ class UTCDateTime(TypeDecorator[datetime]):
         )
 
 
-def object_json() -> CanonicalJSON:
-    return CanonicalJSON()
+def object_json(*, none_as_null: bool = True) -> CanonicalJSON:
+    return CanonicalJSON(none_as_null=none_as_null)
 
 
 class CatalogRecord(Base):
@@ -192,8 +196,14 @@ class LocalFilament(Base):
         CheckConstraint("length(name) BETWEEN 1 AND 120"),
         CheckConstraint("trim(name) = name"),
         CheckConstraint("revision >= 1"),
-        CheckConstraint("default_tare_mg IS NULL OR default_tare_mg >= 0"),
-        CheckConstraint("nominal_weight_mg IS NULL OR nominal_weight_mg >= 0"),
+        CheckConstraint(
+            "default_tare_mg IS NULL OR (typeof(default_tare_mg) = 'integer' "
+            "AND default_tare_mg >= 0)"
+        ),
+        CheckConstraint(
+            "nominal_weight_mg IS NULL OR (typeof(nominal_weight_mg) = 'integer' "
+            "AND nominal_weight_mg >= 0)"
+        ),
         CheckConstraint(
             "json_valid(presentation_json) AND json_type(presentation_json) = 'object'"
         ),
@@ -249,7 +259,9 @@ class SourceFieldOverride(Base):
         ForeignKey("local_filaments.id", ondelete="RESTRICT"), nullable=False
     )
     json_pointer: Mapped[str] = mapped_column(Text, nullable=False)
-    value_json: Mapped[Any] = mapped_column(object_json(), nullable=False)
+    value_json: Mapped[Any] = mapped_column(
+        object_json(none_as_null=False), nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
     local_filament: Mapped[LocalFilament] = relationship(back_populates="overrides")
 
@@ -270,10 +282,15 @@ class Location(Base):
 class Spool(Base):
     __tablename__ = "spools"
     __table_args__ = (
-        CheckConstraint("tare_mg IS NULL OR tare_mg >= 0"),
-        CheckConstraint("initial_mg > 0"),
-        CheckConstraint("remaining_mg >= 0"),
-        CheckConstraint("price_eur_cents IS NULL OR price_eur_cents >= 0"),
+        CheckConstraint(
+            "tare_mg IS NULL OR (typeof(tare_mg) = 'integer' AND tare_mg >= 0)"
+        ),
+        CheckConstraint("typeof(initial_mg) = 'integer' AND initial_mg > 0"),
+        CheckConstraint("typeof(remaining_mg) = 'integer' AND remaining_mg >= 0"),
+        CheckConstraint(
+            "price_eur_cents IS NULL OR (typeof(price_eur_cents) = 'integer' "
+            "AND price_eur_cents >= 0)"
+        ),
         CheckConstraint("revision >= 1"),
     )
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
@@ -310,7 +327,10 @@ class Movement(Base):
             "(kind = 'created' AND before_json IS NULL AND after_json IS NOT NULL) OR (kind <> 'created' AND before_json IS NOT NULL AND after_json IS NOT NULL)"  # noqa: E501
         ),
         CheckConstraint(
-            "(kind = 'consumed' AND amount_mg IS NOT NULL AND length(trim(reason)) BETWEEN 1 AND 500) OR (kind <> 'consumed' AND amount_mg IS NULL)"  # noqa: E501
+            "(kind = 'consumed' AND amount_mg IS NOT NULL AND reason IS NOT NULL AND length(trim(reason)) BETWEEN 1 AND 500) OR (kind <> 'consumed' AND amount_mg IS NULL)"  # noqa: E501
+        ),
+        CheckConstraint(
+            "amount_mg IS NULL OR (typeof(amount_mg) = 'integer' AND amount_mg > 0)"
         ),
     )
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
@@ -455,9 +475,6 @@ class InventorySettings(Base):
             "low_stock_denominator > 0 AND low_stock_denominator <= 1000000"
         ),
         CheckConstraint("low_stock_numerator <= low_stock_denominator"),
-        CheckConstraint(
-            "low_stock_numerator * 10 = low_stock_denominator OR low_stock_numerator * 10 < low_stock_denominator"  # noqa: E501
-        ),
     )
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     low_stock_numerator: Mapped[int] = mapped_column(
@@ -470,7 +487,7 @@ class InventorySettings(Base):
 
 class CatalogScheduleState(Base):
     __tablename__ = "catalog_schedule_state"
-    __table_args__ = (CheckConstraint("wall_time = '03:00'"),)
+    __table_args__ = (CheckConstraint("id = 1"), CheckConstraint("wall_time = '03:00'"))
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     last_handled_slot_key: Mapped[str | None] = mapped_column(Text)
     timezone_name: Mapped[str] = mapped_column(Text, nullable=False)
@@ -485,6 +502,7 @@ class CatalogRun(Base):
         CheckConstraint("trigger IN ('scheduled','manual')"),
         CheckConstraint("status IN ('running','succeeded','failed','interrupted')"),
         CheckConstraint("attempt_count >= 1"),
+        CheckConstraint("source_digest IS NULL OR length(source_digest) = 32"),
         Index(
             "uq_catalog_runs_running",
             "status",
