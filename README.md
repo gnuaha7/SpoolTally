@@ -1,6 +1,6 @@
 # SpoolTally
 
-SpoolTally is a local service for managing a 3D printer filament inventory. This release provides a Python package, local database initialization, an HTTP health endpoint, and development checks. Token administration and inventory features are not implemented yet.
+SpoolTally is a local service for managing a 3D printer filament inventory. This release provides database initialization and migrations, token administration, an HTTP health endpoint, and development checks. Production inventory and location operations are not implemented yet.
 
 ## Set up a local environment
 
@@ -19,9 +19,21 @@ Initialize the default data directory with:
 .venv/bin/python -m spooltally init
 ```
 
-The default directory is `~/.local/share/spooltally`. Set `SPOOLTALLY_DATA_DIR` or pass `--data-dir PATH` to choose another directory. The command-line option takes precedence over the environment variable. SpoolTally expands `~` and resolves the path to an absolute path. The SQLite database is named `spooltally.sqlite3` inside that directory.
+The default directory is `~/.local/share/spooltally`. Set `SPOOLTALLY_DATA_DIR` or pass `--data-dir PATH` to choose another directory. The command-line option takes precedence over the environment variable. SpoolTally expands `~` and resolves the path to an absolute path. The SQLite database is named `spooltally.sqlite3` inside that directory. Initialization applies database migrations and reports `schema_status` as `current`.
 
-CORE-02 initializes the SQLite file and reports the schema as pending. Database schema and migrations belong to CORE-03. The database directory must be on a local filesystem. SQLite on network filesystems, including NAS storage, is unsupported. SpoolTally does not detect or reject network filesystems.
+The database directory must be on a local filesystem. SQLite on network filesystems, including NAS storage, is unsupported. SpoolTally does not detect or reject network filesystems.
+
+## Manage access tokens
+
+Create a token, list configured tokens, and revoke a token by its ID:
+
+```sh
+.venv/bin/python -m spooltally tokens create --name printer
+.venv/bin/python -m spooltally tokens list
+.venv/bin/python -m spooltally tokens revoke TOKEN_ID
+```
+
+To use a different data directory, put `--data-dir PATH` after the token command, for example `.venv/bin/python -m spooltally tokens list --data-dir ./data`. Token creation prints the raw token only once, in the successful creation response; copy it then. Listing and revoking never return the raw token. Revoked tokens remain in the list and can no longer authenticate. The only supported role is `full_access`.
 
 ## Start the service
 
@@ -59,6 +71,6 @@ Run the test suite, linter, and type checker from the repository root:
 
 ## Current scope
 
-The CLI defines the `tokens create` command for a later implementation task. Token creation and token administration are not available until CORE-04. CORE-02 provides the package, initialization command, service startup, health endpoint, and development checks. CORE-03 owns database schema and migrations. Filament inventory and location management are later features.
+CORE-03 provides the SQLite schema and migrations. CORE-04 provides offline token creation, listing, revocation, and full-access authentication. Production inventory and location routes are later features; metrics access and metrics-only tokens are not included.
 
 See [AGENTS.md](AGENTS.md) for contribution rules.

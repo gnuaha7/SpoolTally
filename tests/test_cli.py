@@ -165,8 +165,7 @@ def test_invalid_serve_configuration_exits_before_startup(
 def test_token_command_reports_schema_not_ready_before_core04(
     run_cli, tmp_path: Path
 ) -> None:
-    initialized = run_cli("init", "--data-dir", str(tmp_path))
-    assert initialized.returncode == 0
+    (tmp_path / "spooltally.sqlite3").touch()
 
     result = run_cli(
         "tokens", "create", "--name", "printer", "--data-dir", str(tmp_path)
