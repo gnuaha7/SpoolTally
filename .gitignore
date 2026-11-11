@@ -2,6 +2,8 @@
 /spec-drafts/
 /.work/
 /.orchestration/
+/build/
+/dist/
 /orchestrate/
 /audit-notes/
 /.audit/
