@@ -74,6 +74,13 @@ def _name(value: str) -> str:
     return normalized
 
 
+def _if_match(request: Request) -> str | None:
+    values = request.headers.getlist("if-match")
+    if len(values) > 1:
+        raise _error(400, "invalid_precondition", "If-Match must contain one tag.")
+    return values[0] if values else None
+
+
 def _page(value: str, minimum: int, maximum: int) -> int:
     if not _DIGITS.fullmatch(value):
         raise _error(422, "invalid_input", "Request validation failed.")
@@ -199,7 +206,7 @@ def update_location(
     principal: Annotated[Principal, Depends(require_full_access)],
     session: Annotated[Session, Depends(get_session)],
     body: Annotated[LocationBody, Depends(_location_body)],
-    if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+    if_match: Annotated[str | None, Depends(_if_match)],
     idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ) -> Response:
     name = _name(body.name)
@@ -237,7 +244,7 @@ def delete_location(
     location_id: uuid.UUID,
     principal: Annotated[Principal, Depends(require_full_access)],
     session: Annotated[Session, Depends(get_session)],
-    if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+    if_match: Annotated[str | None, Depends(_if_match)],
     idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ) -> Response:
     accepted_tag = parse_if_match(if_match)

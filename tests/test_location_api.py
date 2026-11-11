@@ -21,6 +21,7 @@ from spooltally.api.app import create_app
 from spooltally.config import Settings
 from spooltally.db.models import (
     Base,
+    IdempotencyRecord,
     InventoryState,
     LocalFilament,
     LocalManufacturer,
@@ -206,6 +207,47 @@ def test_preconditions_unknown_id_and_auth(location_client) -> None:
             == 400
         )
     assert client.get("/api/v1/locations").status_code == 401
+
+
+@pytest.mark.parametrize("method", ["PATCH", "DELETE"])
+@pytest.mark.parametrize("different_tags", [False, True])
+def test_duplicate_if_match_fields_are_invalid_preconditions_without_writes(
+    location_client, method: str, different_tags: bool
+) -> None:
+    client, auth, app, _ = location_client
+    created = client.post(
+        "/api/v1/locations",
+        json={"name": "Before"},
+        headers=auth | {"Idempotency-Key": "duplicate-header-create"},
+    )
+    location_id = created.json()["id"]
+    current_tag = created.headers["etag"]
+    other_tag = '"st1.' + "A" * 43 + '"' if different_tags else current_tag
+    duplicate_headers = list(auth.items()) + [
+        ("If-Match", current_tag),
+        ("If-Match", other_tag),
+        ("Idempotency-Key", f"duplicate-{method}-{different_tags}"),
+    ]
+
+    response = client.request(
+        method,
+        f"/api/v1/locations/{location_id}",
+        headers=duplicate_headers,
+        json={"name": "After"} if method == "PATCH" else None,
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "invalid_precondition"
+    assert client.get(f"/api/v1/locations/{location_id}", headers=auth).json() == {
+        "id": location_id,
+        "name": "Before",
+    }
+    with app.state.session_factory() as session:
+        location = session.get(Location, location_id)
+        assert location is not None and location.revision == 1
+        assert session.scalar(select(Movement)) is None
+        records = session.scalars(select(IdempotencyRecord)).all()
+        assert [record.key for record in records] == ["duplicate-header-create"]
 
 
 def test_idempotency_conflict_and_token_scope(location_client) -> None:
