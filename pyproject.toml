@@ -27,6 +27,11 @@ dev = [
 where = ["src"]
 namespaces = true
 
+[tool.setuptools.data-files]
+"share/spooltally" = ["alembic.ini"]
+"share/spooltally/alembic" = ["alembic/env.py"]
+"share/spooltally/alembic/versions" = ["alembic/versions/*.py"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
