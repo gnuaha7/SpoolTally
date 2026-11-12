@@ -5,9 +5,9 @@
     {
       "id": "brand-a",
       "name": "Example Brand",
-      "logo": "example.png",
       "website": "https://example.invalid",
-      "origin": "Unknown"
+      "origin": "Unknown",
+      "logo_name": "example.png"
     }
   ],
   "materials": [

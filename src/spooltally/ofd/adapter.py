@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import UUID, uuid5
 
-from .schemas import preserve_schemas
+from .schemas import SourceSchema, preserve_schemas
 from .source_schema import decode_schema_documents
 
 _NAMESPACE = UUID("d2029ff0-2c7d-58a3-9a46-8fdba06d6ca5")
@@ -45,7 +45,7 @@ class AdaptedCatalog:
     raw: dict[str, Any]
     records: tuple[CatalogRecordValue, ...]
     links: tuple[CatalogLinkValue, ...]
-    schemas: tuple[Any, ...]
+    schemas: tuple[SourceSchema, ...]
 
 
 @dataclass(frozen=True)
@@ -112,53 +112,6 @@ def _load(payload):
     return doc
 
 
-def _check(value, schema, path, schemas, root_schema=None):
-    if root_schema is None:
-        root_schema = schema
-    if not isinstance(value, dict):
-        return
-    for key, child in value.items():
-        spec = schema.get("properties", {}).get(key)
-        if not isinstance(spec, dict):
-            continue
-        ref = spec.get("$ref")
-        if isinstance(ref, str):
-            if ref.startswith("#/"):
-                target = root_schema
-                for part in ref[2:].split("/"):
-                    target = target.get(part, {}) if isinstance(target, dict) else {}
-            else:
-                target_name = (
-                    ref.rsplit("/", 1)[-1].removesuffix(".json").removesuffix(".schema")
-                )
-                target = schemas.get(target_name, {})
-            if not _matches_type(child, target):
-                raise AdapterError(f"{path}.{key} has wrong referenced type")
-            _check(child, target, f"{path}.{key}", schemas, target)
-        types = spec.get("type", [])
-        types = types if isinstance(types, list) else [types]
-        if child is None:
-            if "null" not in types:
-                raise AdapterError(f"{path}.{key} cannot be null")
-            continue
-        checks = {
-            "object": lambda x: isinstance(x, dict),
-            "array": lambda x: isinstance(x, list),
-            "string": lambda x: isinstance(x, str),
-            "integer": lambda x: isinstance(x, int) and not isinstance(x, bool),
-            "number": lambda x: isinstance(x, (int, float)) and not isinstance(x, bool),
-            "boolean": lambda x: isinstance(x, bool),
-        }
-        unions = spec.get("oneOf", spec.get("anyOf", []))
-        if types and not any(checks[t](child) for t in types if t in checks):
-            if not unions or not any(_matches_type(child, option) for option in unions):
-                raise AdapterError(f"{path}.{key} has wrong type")
-        _check(child, spec, f"{path}.{key}", schemas, root_schema)
-        if isinstance(child, list) and isinstance(spec.get("items"), dict):
-            for i, item in enumerate(child):
-                _check(item, spec["items"], f"{path}.{key}[{i}]", schemas, root_schema)
-
-
 def _matches_type(value, schema):
     types = schema.get("type", [])
     types = types if isinstance(types, list) else [types]
@@ -171,6 +124,59 @@ def _matches_type(value, schema):
         "boolean": lambda x: isinstance(x, bool),
     }
     return not types or any(checks[t](value) for t in types if t in checks)
+
+
+def _resolve_schema(spec, root_schema, schemas):
+    if spec.startswith("#/"):
+        target = root_schema
+        for part in spec[2:].split("/"):
+            target = target.get(part, {}) if isinstance(target, dict) else {}
+        return target
+    name = spec.rsplit("/", 1)[-1].removesuffix(".json").removesuffix(".schema")
+    return schemas.get(name, {})
+
+
+def _check_value(value, spec, path, schemas, root_schema):
+    if not isinstance(spec, dict):
+        return
+    ref = spec.get("$ref")
+    if isinstance(ref, str):
+        target = _resolve_schema(ref, root_schema, schemas)
+        if not _matches_type(value, target):
+            raise AdapterError(f"{path} has wrong referenced type")
+        ref_root = target if ref.startswith("./") else root_schema
+        _check_value(value, target, path, schemas, ref_root)
+    types = spec.get("type", [])
+    types = types if isinstance(types, list) else [types]
+    if value is None:
+        if "null" not in types and types:
+            raise AdapterError(f"{path} cannot be null")
+        return
+    unions = spec.get("oneOf", spec.get("anyOf", []))
+    if types and not _matches_type(value, spec):
+        if not unions or not any(_matches_type(value, option) for option in unions):
+            raise AdapterError(f"{path} has wrong type")
+    if isinstance(value, dict):
+        props = spec.get("properties", {})
+        for key, child in value.items():
+            child_spec = props.get(key) if isinstance(props, dict) else None
+            if isinstance(child_spec, dict):
+                _check_value(child, child_spec, f"{path}.{key}", schemas, root_schema)
+            elif isinstance(spec.get("additionalProperties"), dict):
+                _check_value(
+                    child,
+                    spec["additionalProperties"],
+                    f"{path}.{key}",
+                    schemas,
+                    root_schema,
+                )
+    if isinstance(value, list) and isinstance(spec.get("items"), dict):
+        for i, item in enumerate(value):
+            _check_value(item, spec["items"], f"{path}[{i}]", schemas, root_schema)
+
+
+def _check(value, schema, path, schemas):
+    _check_value(value, schema, path, schemas, schema)
 
 
 def adapt_catalog(
@@ -186,7 +192,7 @@ def adapt_catalog(
             if not isinstance(doc.get(spec.collection), list):
                 raise AdapterError(f"{spec.collection} must be an array")
         records = []
-        rows = []
+        rows: list[tuple[CatalogRecordValue, dict[str, Any], str | None, _Kind]] = []
         index: dict[tuple[str, str], list[CatalogRecordValue]] = {}
         identities = set()
         uuids = set()
@@ -228,6 +234,20 @@ def adapt_catalog(
                 parent_identity = ""
                 if spec.parent_kind:
                     parents = index.get((spec.parent_kind, str(pref)), [])
+                    brand_ref = raw.get("brand_id")
+                    if (
+                        spec.parent_kind == "material"
+                        and brand_ref
+                        and len(parents) > 1
+                    ):
+                        parents = [
+                            candidate
+                            for candidate in parents
+                            if any(
+                                row[0].id == candidate.id and row[2] == brand_ref
+                                for row in rows
+                            )
+                        ]
                     if len(parents) != 1:
                         raise AdapterError(
                             f"{path}.{spec.parent_field} is dangling or ambiguous"
@@ -245,6 +265,8 @@ def adapt_catalog(
                 identities.add(ident)
                 rid = uid or str(uuid5(_NAMESPACE, "v1:" + ident))
                 known = set(schema.get("properties", {})) | {"id", "uuid"}
+                if kind in {"brand", "store"}:
+                    known.add("logo_name")
                 rec = CatalogRecordValue(
                     rid,
                     kind,
@@ -262,8 +284,17 @@ def adapt_catalog(
                 rows.append((rec, raw, pref, spec))
                 index.setdefault((kind, sid), []).append(rec)
 
-        def resolve(kind, ref, field):
+        def resolve(kind, ref, field, context=None):
             found = index.get((kind, str(ref)), [])
+            if context and kind == "material" and context.get("brand_id"):
+                found = [
+                    candidate
+                    for candidate in found
+                    if any(
+                        row[0].id == candidate.id and row[2] == context["brand_id"]
+                        for row in rows
+                    )
+                ]
             if not isinstance(ref, str) or len(found) != 1:
                 raise AdapterError(f"{field} is dangling or ambiguous")
             return found[0]
@@ -272,7 +303,7 @@ def adapt_catalog(
         links = []
         for rec, raw, pref, spec in rows:
             parent = (
-                resolve(spec.parent_kind, pref, spec.parent_field)
+                resolve(spec.parent_kind, pref, spec.parent_field, raw)
                 if spec.parent_kind
                 else None
             )
@@ -301,9 +332,8 @@ def adapt_catalog(
                 ("store_id", "store"),
             ]:
                 if field in raw and raw[field] is not None:
-                    target = resolve(target_kind, raw[field], field)
-                    if field != spec.parent_field:
-                        links.append(CatalogLinkValue(rec.id, field, 0, target.id))
+                    target = resolve(target_kind, raw[field], field, raw)
+                    links.append(CatalogLinkValue(rec.id, field, 0, target.id))
         return AdaptedCatalog(
             version,
             generated,

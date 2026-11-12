@@ -37,7 +37,7 @@ def minimal():
     }
 
 
-def test_round_trip_raw_catalog_and_unknowns():
+def test_adapter_round_trip_preserves_all_source_fields():
     doc = minimal()
     doc["brands"] = [
         {
@@ -55,7 +55,7 @@ def test_round_trip_raw_catalog_and_unknowns():
     assert result.records[0].extension_json["new"] == {"x": [False, None]}
 
 
-def test_rename_keeps_uuid_identity():
+def test_adapter_preserves_uuid_when_source_name_changes():
     doc = minimal()
     doc["brands"] = [
         {
@@ -77,7 +77,7 @@ def test_rename_keeps_uuid_identity():
     )
 
 
-def test_baseline_preserves_null_zero_false_absence():
+def test_adapter_preserves_field_paths_explicit_null_list_and_nested_values():
     doc = minimal()
     doc["brands"] = [{"id": "b", "name": "B", "logo": "", "website": "", "origin": ""}]
     doc["materials"] = [{"id": "m", "brand_id": "b", "material": "PLA"}]
@@ -88,6 +88,8 @@ def test_baseline_preserves_null_zero_false_absence():
             "name": "F",
             "density": 1.2,
             "diameter_tolerance": 0.1,
+            "certifications": ["A"],
+            "slicer_settings": {"orcaslicer": {"overrides": {"nozzle_temp": 210}}},
         }
     ]
     doc["variants"] = [
@@ -96,17 +98,28 @@ def test_baseline_preserves_null_zero_false_absence():
             "filament_id": "f",
             "name": "n",
             "color_hex": ["#fff"],
+            "hex_variants": ["#fefefe"],
             "discontinued": False,
             "transmission_distance": 0,
         }
     ]
     result = adapt_catalog(json.dumps(doc), inputs())
-    raw = next(r for r in result.records if r.kind == "variant").source_baseline_json
-    assert raw["discontinued"] is False and raw["transmission_distance"] == 0
-    assert "uuid" not in raw and "hex_variants" not in raw
+    filament = next(r for r in result.records if r.kind == "filament")
+    variant = next(r for r in result.records if r.kind == "variant")
+    assert filament.source_baseline_json["certifications"] == ["A"]
+    assert (
+        filament.source_baseline_json["slicer_settings"]["orcaslicer"]["overrides"][
+            "nozzle_temp"
+        ]
+        == 210
+    )
+    assert variant.source_baseline_json["discontinued"] is False
+    assert variant.source_baseline_json["transmission_distance"] == 0
+    assert variant.source_baseline_json["hex_variants"] == ["#fefefe"]
+    assert "uuid" not in variant.source_baseline_json
 
 
-def test_corrupt_payload_is_rejected_without_partial_result():
+def test_adapter_rejects_corrupt_source_payload():
     doc = minimal()
     doc["brands"] = [
         {
@@ -142,7 +155,9 @@ def test_all_collections_resolve_hierarchy_and_scalar_links():
     doc["variants"] = [
         {"id": "v", "filament_id": "f", "name": "V", "color_hex": ["#fff"]}
     ]
-    doc["sizes"] = [{"id": "s", "variant_id": "v"}]
+    doc["sizes"] = [
+        {"id": "s", "variant_id": "v", "container_details": {"recycled_pct": None}}
+    ]
     doc["stores"] = [
         {
             "id": "shop",
@@ -161,7 +176,16 @@ def test_all_collections_resolve_hierarchy_and_scalar_links():
     ] == next(r.id for r in result.records if r.kind == "size")
     assert [
         (link.relationship_name, link.target_record_id) for link in result.links
-    ] == [("store_id", next(r.id for r in result.records if r.kind == "store"))]
+    ] == [
+        ("brand_id", next(r.id for r in result.records if r.kind == "brand")),
+        ("material_id", next(r.id for r in result.records if r.kind == "material")),
+        ("filament_id", next(r.id for r in result.records if r.kind == "filament")),
+        ("variant_id", next(r.id for r in result.records if r.kind == "variant")),
+        ("size_id", next(r.id for r in result.records if r.kind == "size")),
+        ("store_id", next(r.id for r in result.records if r.kind == "store")),
+    ]
+    size = next(r for r in result.records if r.kind == "size")
+    assert size.source_baseline_json["container_details"]["recycled_pct"] is None
 
 
 def test_nested_known_type_and_nonfinite_number_are_rejected():
@@ -201,6 +225,14 @@ def test_same_source_ids_are_scoped_to_parent_identity():
     assert materials[0].identity_key != materials[1].identity_key
 
 
+def test_fallback_identity_uses_pinned_literal_uuid():
+    doc = minimal()
+    doc["brands"] = [{"id": "b", "name": "B"}]
+    brand = adapt_catalog(doc, inputs()).records[0]
+    assert brand.identity_key == "path:6272616e64::62"
+    assert brand.id == "d7655c24-9db2-597e-a4f7-d0fc13103b3c"
+
+
 def test_pinned_bulk_fixture_preserves_export_extensions():
     doc = json.loads((FIXTURES / "bulk.json").read_text())
     result = adapt_catalog(doc, inputs())
@@ -208,3 +240,62 @@ def test_pinned_bulk_fixture_preserves_export_extensions():
     assert filament.source_id == "filament-a"
     assert filament.extension_json["vendor_flag"] == {"active": False}
     assert len(result.records) == 7
+
+
+def test_review_findings_are_rejected_or_preserved():
+    doc = minimal()
+    doc["brands"] = [{"id": "b", "name": "B", "logo_name": "b.svg"}]
+    doc["materials"] = [{"id": "m", "brand_id": "b", "material": "PLA"}]
+    doc["filaments"] = [
+        {
+            "id": "f",
+            "material_id": "m",
+            "name": "F",
+            "density": 1,
+            "diameter_tolerance": 0.1,
+        }
+    ]
+    doc["variants"] = [{"id": "v", "filament_id": "f", "name": "V", "color_hex": [42]}]
+    with pytest.raises(AdapterError):
+        adapt_catalog(doc, inputs())
+    doc["variants"][0]["color_hex"] = ["#fff"]
+    result = adapt_catalog(doc, inputs())
+    assert result.records[0].typed_fields_json["logo_name"] == "b.svg"
+    assert {link.relationship_name for link in result.links} == {
+        "brand_id",
+        "material_id",
+        "filament_id",
+    }
+    assert any(
+        s.schema_name == "future_schema"
+        for s in adapt_catalog(
+            minimal(), {**inputs(), "future_schema": b'{"type":"object"}'}
+        ).schemas
+    )
+    bad = {**inputs(), "mechanical_schema": b'{"type":"object","x":1e400}'}
+    with pytest.raises(ValueError, match="finite"):
+        adapt_catalog(minimal(), bad)
+
+
+def test_parent_context_resolves_duplicate_material_ids_and_nested_shared_types():
+    doc = minimal()
+    doc["brands"] = [{"id": x, "name": x} for x in ("a", "b")]
+    doc["materials"] = [
+        {"id": "pla", "brand_id": x, "material": "PLA"} for x in ("a", "b")
+    ]
+    doc["filaments"] = [
+        {
+            "id": "f",
+            "material_id": "pla",
+            "brand_id": "a",
+            "name": "F",
+            "density": 1,
+            "diameter_tolerance": 0.1,
+        }
+    ]
+    assert adapt_catalog(doc, inputs()).records[-1].parent_id is not None
+    doc["filaments"][0]["sustainability"] = {"recycled_content": {"pct": "wrong"}}
+    with pytest.raises(AdapterError):
+        adapt_catalog(doc, inputs())
+    doc["filaments"][0]["sustainability"] = {"recycled_content": {"pct": None}}
+    adapt_catalog(doc, inputs())

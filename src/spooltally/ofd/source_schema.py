@@ -1,4 +1,5 @@
 import json
+import math
 from typing import Any
 
 
@@ -26,4 +27,16 @@ def decode_schema_documents(documents: dict[str, bytes | str]) -> dict[str, Any]
             raise ValueError(f"invalid schema {name}: {exc}") from exc
         if not isinstance(result[name], dict):
             raise ValueError(f"schema {name} must be an object")
+
+        def finite(value, path, schema_name=name):
+            if isinstance(value, float) and not math.isfinite(value):
+                raise ValueError(f"schema {schema_name} {path} must be finite")
+            if isinstance(value, dict):
+                for key, child in value.items():
+                    finite(child, f"{path}.{key}")
+            elif isinstance(value, list):
+                for index, child in enumerate(value):
+                    finite(child, f"{path}[{index}]")
+
+        finite(result[name], "document")
     return result

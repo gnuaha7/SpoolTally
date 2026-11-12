@@ -22,7 +22,7 @@ SOURCE_SCHEMA_NAMES = frozenset(
 
 @dataclass(frozen=True)
 class SourceSchema:
-    name: str
+    schema_name: str
     source_version: str
     source_json: Any
 
@@ -30,8 +30,9 @@ class SourceSchema:
 def preserve_schemas(
     documents: Mapping[str, Any], source_version: str
 ) -> tuple[SourceSchema, ...]:
-    if set(documents) != SOURCE_SCHEMA_NAMES:
-        raise ValueError("schema set mismatch")
+    missing = SOURCE_SCHEMA_NAMES - set(documents)
+    if missing:
+        raise ValueError(f"missing schemas: {', '.join(sorted(missing))}")
     return tuple(
         SourceSchema(k, source_version, documents[k]) for k in sorted(documents)
     )
