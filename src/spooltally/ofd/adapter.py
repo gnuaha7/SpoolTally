@@ -211,6 +211,15 @@ def adapt_catalog(
                         "size_id": {"type": "string"},
                     },
                 }
+            elif kind in {"brand", "store"}:
+                properties = schema.get("properties", {})
+                schema = {
+                    **schema,
+                    "properties": {
+                        **properties,
+                        "logo_name": properties["logo"],
+                    },
+                }
             for i, raw in enumerate(doc[spec.collection]):
                 path = f"{spec.collection}[{i}]"
                 if not isinstance(raw, dict):

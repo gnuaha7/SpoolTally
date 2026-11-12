@@ -277,6 +277,41 @@ def test_review_findings_are_rejected_or_preserved():
         adapt_catalog(minimal(), bad)
 
 
+@pytest.mark.parametrize("kind", ["brand", "store"])
+@pytest.mark.parametrize(
+    "logo_name", [42, ["logo.svg"], {"name": "logo.svg"}, None, True]
+)
+def test_adapter_rejects_invalid_exported_logo_name_types(kind, logo_name):
+    doc = minimal()
+    collection = KINDS[kind].collection
+    doc[collection] = [{"id": "logo-owner", "logo_name": logo_name}]
+
+    with pytest.raises(AdapterError, match="logo_name"):
+        adapt_catalog(doc, inputs())
+
+
+@pytest.mark.parametrize("kind", ["brand", "store"])
+def test_adapter_preserves_exported_logo_name_string_without_schema_mutation(kind):
+    doc = minimal()
+    collection = KINDS[kind].collection
+    doc[collection] = [{"id": "logo-owner", "logo_name": "logo.svg"}]
+    schemas = inputs()
+    originals = dict(schemas)
+
+    result = adapt_catalog(doc, schemas)
+
+    record = next(record for record in result.records if record.kind == kind)
+    assert record.typed_fields_json["logo_name"] == "logo.svg"
+    assert record.raw_json["logo_name"] == "logo.svg"
+    assert schemas == originals
+    source_schema = next(
+        schema.source_json
+        for schema in result.schemas
+        if schema.schema_name == KINDS[kind].schema
+    )
+    assert "logo_name" not in source_schema["properties"]
+
+
 def test_parent_context_resolves_duplicate_material_ids_and_nested_shared_types():
     doc = minimal()
     doc["brands"] = [{"id": x, "name": x} for x in ("a", "b")]

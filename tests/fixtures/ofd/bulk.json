@@ -63,13 +63,13 @@
       "id": "shop",
       "name": "Example Shop",
       "storefront_url": "https://shop.invalid",
-      "logo": "shop.png",
       "ships_from": [
         "US"
       ],
       "ships_to": [
         "US"
-      ]
+      ],
+      "logo_name": "shop.png"
     }
   ],
   "purchase_links": [

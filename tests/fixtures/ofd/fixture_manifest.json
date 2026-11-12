@@ -4,7 +4,7 @@
   "provenance": "Schema files copied byte-for-byte from the pinned upstream schemas directory. No live API payload is represented.",
   "files": {
     "brand_schema.json": "0261f583aa5d6d74c8a9c952c5b78c1c60d1d950f35a12338d1e7191e473b649",
-    "bulk.json": "c71943ce11a2b8e24f1bc7d23fdd3ebabc3ee704974ed8c494aba6166c452106",
+    "bulk.json": "830b48dda744d098a1e81ee90f8730c13cf116d4ac6aa52055849a430120795d",
     "filament_schema.json": "33f60f12b90efe9e1f81af55ef102b2a27eead2bf65444faf8c1772e1b3d419a",
     "material_aio_schema.json": "4f2b594a946f8d915b6436405bff7d3b9052a49249edb5a2b46ca2a5586a283a",
     "material_defaults_schema.json": "c61778b953b330c594596991ec03008c47462a1e7c273b14673a63a1aace0111",
