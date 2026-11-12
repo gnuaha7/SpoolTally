@@ -1,0 +1,86 @@
+{
+  "version": "pinned-export-shape",
+  "generated_at": "fixture-value",
+  "brands": [
+    {
+      "id": "brand-a",
+      "name": "Example Brand",
+      "logo": "example.png",
+      "website": "https://example.invalid",
+      "origin": "Unknown"
+    }
+  ],
+  "materials": [
+    {
+      "id": "pla",
+      "brand_id": "brand-a",
+      "material": "PLA",
+      "default_slicer_settings": {
+        "generic": {
+          "nozzle_temp": 210
+        }
+      }
+    }
+  ],
+  "filaments": [
+    {
+      "id": "filament-a",
+      "material_id": "pla",
+      "brand_id": "brand-a",
+      "name": "PLA 1.75",
+      "density": 1.24,
+      "diameter_tolerance": 0.03,
+      "slicer_settings": {
+        "generic": {
+          "nozzle_temp": 215
+        }
+      },
+      "vendor_flag": {
+        "active": false
+      }
+    }
+  ],
+  "variants": [
+    {
+      "id": "black",
+      "filament_id": "filament-a",
+      "name": "Black",
+      "color_hex": [
+        "#000000"
+      ]
+    }
+  ],
+  "sizes": [
+    {
+      "id": "1kg",
+      "variant_id": "black",
+      "filament_weight": 1000,
+      "diameter": 1.75
+    }
+  ],
+  "stores": [
+    {
+      "id": "shop",
+      "name": "Example Shop",
+      "storefront_url": "https://shop.invalid",
+      "logo": "shop.png",
+      "ships_from": [
+        "US"
+      ],
+      "ships_to": [
+        "US"
+      ]
+    }
+  ],
+  "purchase_links": [
+    {
+      "id": "buy-1kg",
+      "size_id": "1kg",
+      "store_id": "shop",
+      "url": "https://shop.invalid/item",
+      "ships_from": [
+        "US"
+      ]
+    }
+  ]
+}
