@@ -1,0 +1,21 @@
+{
+  "repository": "https://github.com/OpenFilamentCollective/open-filament-database",
+  "revision": "fbdf27f53d6a76b2bc57a7e99b08d62bf6cd325d",
+  "provenance": "Schema files copied byte-for-byte from the pinned upstream schemas directory. No live API payload is represented.",
+  "files": {
+    "brand_schema.json": "0261f583aa5d6d74c8a9c952c5b78c1c60d1d950f35a12338d1e7191e473b649",
+    "bulk.json": "830b48dda744d098a1e81ee90f8730c13cf116d4ac6aa52055849a430120795d",
+    "filament_schema.json": "33f60f12b90efe9e1f81af55ef102b2a27eead2bf65444faf8c1772e1b3d419a",
+    "material_aio_schema.json": "4f2b594a946f8d915b6436405bff7d3b9052a49249edb5a2b46ca2a5586a283a",
+    "material_defaults_schema.json": "c61778b953b330c594596991ec03008c47462a1e7c273b14673a63a1aace0111",
+    "material_schema.json": "99dda4f7f781e757b26e2775a3b8050b7785ff091babce165e1eb2b5bef338f7",
+    "material_types_schema.json": "a22f5e6b52cfe9b5e902cf7bd6fde7ef3ee9956906782b9461eca4dbf262e068",
+    "mechanical_schema.json": "ff72db787cd878c79fd49b45b78be9eb072600e95dd29b37299b79961e3feeb6",
+    "sizes_schema.json": "8b9d18595bc1f79dc41588f17505498942be60436aa3cf7949c12bd3a79a4729",
+    "store_schema.json": "825e6f0a8563697522c508b95ceedec527796cb4ea8fbb013b0d87fafb7e6470",
+    "sustainability_schema.json": "7ae667f98b6709b7851ea46869ae43022a2591a48f71663485748910b126ede4",
+    "trait_rules.json": "37bda7f3933d6edef08fdac573c280866f00345fe6160875a0f8b36bf78712b6",
+    "variant_schema.json": "5f119a84c128dd664276a9ae701445bbedcfc84370ebfe884977d40eb06ab949"
+  },
+  "bulk_fixture_note": "Representative bulk export shape assembled from exporter code and pinned source examples; values are illustrative, not a downloaded live payload."
+}

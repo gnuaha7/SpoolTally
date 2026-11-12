@@ -1,0 +1,151 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "definitions": {
+        "string_limit": {
+            "maxLength": 1000
+        },
+        "material_type": {
+            "$ref": "./material_types_schema.json"
+        },
+        "specific_slicer_settings": {
+            "type": "object",
+            "properties": {
+                "profile_name": {
+                    "type": "string",
+                    "description": "The name of the profile for this filament. If there is a profile specifically for this filament, that is what should be specified, even if it is printer specific. For slic3r variants, data after the '@' does not need to be included and will be removed when loading into python.",
+                    "$ref": "#/definitions/string_limit"
+                },
+                "overrides": {
+                    "type": "object",
+                    "description": "Key-value pairs for settings that should be overridden for this filament"
+                },
+                "id": {
+                    "type": "string",
+                    "description": "The slicer-native identifier for this filament profile (e.g. GFB00, FFF02)",
+                    "$ref": "#/definitions/string_limit"
+                },
+                "generic_id": {
+                    "type": "string",
+                    "description": "Fallback generic slicer profile ID for this material type (e.g. GFL99 for Generic PLA)",
+                    "$ref": "#/definitions/string_limit"
+                },
+                "first_layer_bed_temp": {
+                    "type": "integer"
+                },
+                "first_layer_nozzle_temp": {
+                    "type": "integer"
+                },
+                "bed_temp": {
+                    "type": "integer"
+                },
+                "nozzle_temp": {
+                    "type": "integer"
+                }
+            },
+            "required": [
+                "profile_name"
+            ]
+        },
+        "slicer_settings": {
+            "type": "object",
+            "properties": {
+                "prusaslicer": {
+                    "$ref": "#/definitions/specific_slicer_settings"
+                },
+                "bambustudio": {
+                    "$ref": "#/definitions/specific_slicer_settings"
+                },
+                "orcaslicer": {
+                    "$ref": "#/definitions/specific_slicer_settings"
+                },
+                "cura": {
+                    "$ref": "#/definitions/specific_slicer_settings"
+                },
+                "superslicer": {
+                    "$ref": "#/definitions/specific_slicer_settings"
+                },
+                "elegooslicer": {
+                    "$ref": "#/definitions/specific_slicer_settings"
+                },
+                "crealityprint": {
+                    "$ref": "#/definitions/specific_slicer_settings"
+                },
+                "anycubicslicer": {
+                    "$ref": "#/definitions/specific_slicer_settings"
+                },
+                "kirimoto": {
+                    "$ref": "#/definitions/specific_slicer_settings"
+                },
+                "generic": {
+                    "type": "object",
+                    "description": "Generic options that will automatically be mapped to the correct config definition for each slicer. Slicer specific settings are applied first, then these are applied on top",
+                    "properties": {
+                        "first_layer_bed_temp": {
+                            "type": "integer"
+                        },
+                        "first_layer_nozzle_temp": {
+                            "type": "integer"
+                        },
+                        "bed_temp": {
+                            "type": "integer"
+                        },
+                        "nozzle_temp": {
+                            "type": "integer"
+                        }
+                    }
+                }
+            },
+            "additionalProperties": false
+        }
+    },
+    "properties": {
+        "uuid": {
+            "type": "string",
+            "title": "UUID",
+            "description": "Canonical UUID (UUIDv4), assigned automatically by CI on merge. Leave empty when creating.",
+            "readOnly": true,
+            "pattern": "^$|^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "moved_from": {
+            "type": "array",
+            "title": "Moved From",
+            "description": "Former canonical UUIDv4(s) this entity previously had (before a merge or move). Lets old UUID references resolve here. Managed by tooling/CI — leave empty when creating.",
+            "readOnly": true,
+            "items": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            }
+        },
+        "material": {
+            "title": "Material Type",
+            "description": "The type of material (e.g., PLA, PETG, ABS). This determines the base properties and recommended settings.",
+            "$ref": "#/definitions/material_type"
+        },
+        "material_class": {
+            "type": "string",
+            "title": "Material Class",
+            "enum": [
+                "FFF",
+                "SLA"
+            ],
+            "default": "FFF",
+            "description": "FFF (Fused Filament Fabrication) for standard filament printing, SLA (Stereolithography) for resin-based printing. Leave as FFF if you're unsure."
+        },
+        "default_max_dry_temperature": {
+            "type": "integer",
+            "title": "Default Max Dry Temperature (°C)",
+            "description": "Maximum temperature (in °C) that can be used to dry this material without degradation. Common values: PLA ~45°C, PETG ~65°C, ABS ~80°C.",
+            "x-placeholder": "e.g., 55"
+        },
+        "default_slicer_settings": {
+            "$ref": "#/definitions/slicer_settings",
+            "title": "Default Slicer Settings",
+            "description": "Configure default slicer profiles and temperature overrides for different slicing software. Toggle each slicer to configure its specific settings."
+        }
+    },
+    "additionalProperties": false,
+    "required": [
+        "material"
+    ]
+}
