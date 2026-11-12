@@ -129,6 +129,8 @@ def fetch_logo(
             headers["If-Modified-Since"] = previous_http["last_modified"]
     try:
         request = client.build_request("GET", url, headers=headers)
+        if request.url.query or request.url.fragment:
+            return LogoResult("failed", url, metadata)
         response = client.send(request, stream=True, follow_redirects=False)
         try:
             if response.status_code == 304:

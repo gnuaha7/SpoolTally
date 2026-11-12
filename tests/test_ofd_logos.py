@@ -36,7 +36,9 @@ def source(ext: str = "png", **extra: object) -> LogoSource:
     return LogoSource("brand", "raw/id", index, metadata)
 
 
-def test_trusted_png_and_jpg_logos_are_stored() -> None:
+def test_trusted_png_and_jpg_logos_are_stored(tmp_path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'logos.sqlite3'}")
+    Base.metadata.create_all(engine)
     for ext, body, mime in (("png", PNG, "image/png"), ("jpg", JPEG, "image/jpeg")):
         transport = httpx.MockTransport(
             lambda request, body=body, mime=mime: httpx.Response(
@@ -50,6 +52,70 @@ def test_trusted_png_and_jpg_logos_are_stored() -> None:
         assert result.media_type == mime
         assert result.sha256 == hashlib.sha256(body).digest()
         assert result.source_metadata["index"]["brand_id"] == "raw/id"
+        now = datetime.now(UTC)
+        record = CatalogRecord(
+            id=str(uuid4()), kind="brand", source_id="raw/id",
+            identity_key=f"brand:raw/id:{ext}", source_baseline_json={},
+            typed_fields_json={}, extension_json={}, raw_json={},
+            first_seen_at=now, last_seen_at=now,
+        )
+        with Session(engine) as session:
+            session.add(record)
+            session.commit()
+            inserted = upsert_source_asset(session, record, source(ext), result)
+            assert inserted is not None
+            asset_id = inserted.id
+            session.commit()
+            session.expire_all()
+            saved = session.scalar(
+                select(Asset).where(Asset.source_record_id == record.id)
+            )
+            assert saved is not None
+            assert (saved.id, saved.blob, saved.media_type, saved.sha256) == (
+                asset_id, body, mime, hashlib.sha256(body).digest()
+            )
+            assert saved.source_metadata_json == {
+                **result.source_metadata,
+                "url": result.url,
+                "http": {"etag": None, "last_modified": None},
+            }
+            first_fetched_at = saved.fetched_at
+            replacement = fetch_logo(
+                source(ext),
+                httpx.Client(transport=httpx.MockTransport(
+                    lambda request, body=body, mime=mime: httpx.Response(
+                        200,
+                        content=body + b"y",
+                        headers={"Content-Type": mime},
+                    )
+                )),
+            )
+            replaced = upsert_source_asset(session, record, source(ext), replacement)
+            assert replaced is not None and replaced.id == asset_id
+            session.commit()
+            session.expire_all()
+            saved = session.scalar(
+                select(Asset).where(Asset.source_record_id == record.id)
+            )
+            assert saved is not None
+            assert (saved.id, saved.blob, saved.media_type, saved.sha256) == (
+                asset_id, body + b"y", mime, hashlib.sha256(body + b"y").digest()
+            )
+            assert saved.fetched_at >= first_fetched_at
+    engine.dispose()
+
+
+def test_client_params_cannot_add_query_to_trusted_logo_request() -> None:
+    requested: list[str] = []
+    transport = httpx.MockTransport(
+        lambda request: (requested.append(str(request.url)) or httpx.Response(
+            200, content=PNG, headers={"Content-Type": "image/png"}
+        ))
+    )
+    with httpx.Client(transport=transport, params={"tracking": "1"}) as client:
+        result = fetch_logo(source(), client)
+    assert result.status == "failed"
+    assert requested == []
 
 
 def test_untrusted_hosts_redirects_svg_and_oversize_are_rejected() -> None:
