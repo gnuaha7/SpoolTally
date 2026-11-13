@@ -112,7 +112,7 @@ def test_corrupt_gzip_marks_run_failed_before_catalog_changes(tmp_path):
         )
 
     def response(request):
-        return httpx.Response(200, content=b"not a gzip stream")
+        return httpx.Response(200, stream=httpx.ByteStream(b"not a gzip stream"))
 
     execute_run(
         factory,
@@ -142,7 +142,7 @@ def test_expanded_download_limit_accepts_exact_bytes_and_rejects_one_more():
         encoded = gzip.compress(body)
 
         def response(request):
-            return httpx.Response(200, content=encoded)
+            return httpx.Response(200, stream=httpx.ByteStream(encoded))
 
         with httpx.Client(transport=httpx.MockTransport(response)) as client:
             return _bounded_source(client)
@@ -172,7 +172,7 @@ def test_compressed_download_limit_counts_exact_streamed_body_bytes():
             break
 
     def exact_response(request):
-        return httpx.Response(200, content=encoded)
+        return httpx.Response(200, stream=httpx.ByteStream(encoded))
 
     with httpx.Client(transport=httpx.MockTransport(exact_response)) as client:
         expanded, compressed, version = _bounded_source(client)
@@ -183,7 +183,7 @@ def test_compressed_download_limit_counts_exact_streamed_body_bytes():
     encoded = gzip.compress(prefix + b" " * (spaces + 1), compresslevel=0)
 
     def over_response(request):
-        return httpx.Response(200, content=encoded)
+        return httpx.Response(200, stream=httpx.ByteStream(encoded))
 
     with httpx.Client(transport=httpx.MockTransport(over_response)) as client:
         try:
@@ -241,4 +241,157 @@ def test_manual_request_reuses_a_scheduled_claim(tmp_path):
     assert scheduled is not None
     assert manual.run_id == scheduled.run_id
     assert not manual.should_execute
+    engine.dispose()
+
+
+def test_schema_index_uses_official_file_and_path_fields():
+    from spooltally.ofd.scheduler import _schema_documents
+    from spooltally.ofd.schemas import SOURCE_SCHEMA_NAMES
+
+    requested = []
+
+    def respond(request):
+        requested.append(request.url.path)
+        if request.url.path.endswith("/index.json"):
+            return httpx.Response(
+                200,
+                json={
+                    "schemas": [
+                        {
+                            "name": "brand",
+                            "file": "brand_schema.json",
+                            "path": "brand_schema.json",
+                        },
+                        {
+                            "name": "custom",
+                            "file": "custom.json",
+                            "path": "custom.json",
+                        },
+                    ]
+                },
+            )
+        return httpx.Response(200, content=b"{}")
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        documents = _schema_documents(client)
+
+    assert "brand_schema" in documents
+    assert "custom" in documents
+    assert "brand" not in documents
+    assert not any(path.endswith("/brand.json") for path in requested)
+    assert len(documents) == len(SOURCE_SCHEMA_NAMES | {"custom"})
+
+
+def test_official_logo_index_and_metadata_paths_are_loaded():
+    from spooltally.ofd.scheduler import _logo_sources
+
+    requested = []
+
+    def respond(request):
+        requested.append(request.url.path)
+        if request.url.path.endswith("/brands/logo/index.json"):
+            return httpx.Response(
+                200,
+                json={
+                    "count": 1,
+                    "logos": [
+                        {
+                            "id": "brand-logo",
+                            "brand_id": "brand-1",
+                            "path": "brand-logo.json",
+                        }
+                    ],
+                },
+            )
+        if request.url.path.endswith("/stores/logo/index.json"):
+            return httpx.Response(200, json={"count": 0, "logos": []})
+        if request.url.path.endswith("/brands/logo/brand-logo.json"):
+            return httpx.Response(200, json={"url": "https://assets.example/logo.png"})
+        return httpx.Response(404)
+
+    payload = {"brands": [{"id": "brand-1"}], "stores": []}
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        logos = _logo_sources(client, payload)
+
+    assert len(logos) == 1
+    assert logos[0].kind == "brand"
+    assert logos[0].source_id == "brand-1"
+    assert "/api/v1/brands/logo/index.json" in requested
+    assert "/api/v1/brands/logo/brand-logo.json" in requested
+
+
+def test_bounded_source_counts_raw_http_gzip_stream():
+    import gzip
+
+    from spooltally.ofd.scheduler import _bounded_source
+
+    wire_body = gzip.compress(b'{"version":"v"}')
+
+    def respond(request):
+        return httpx.Response(
+            200,
+            headers={"Content-Encoding": "gzip"},
+            stream=httpx.ByteStream(wire_body),
+        )
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        expanded, compressed, version = _bounded_source(client)
+
+    assert expanded == b'{"version":"v"}'
+    assert compressed == wire_body
+    assert version == "v"
+
+
+def test_stopped_refresh_is_interrupted_and_resumable(tmp_path):
+    import gzip
+    import threading
+
+    engine = create_engine(tmp_path / "stopped.sqlite3")
+    Base.metadata.create_all(engine)
+    factory = create_session_factory(engine)
+    run_id = "ca40a98d-cb26-4a6e-a602-d395b17b1e6e"
+    now = datetime(2026, 11, 13, 12, tzinfo=UTC)
+    with factory.begin() as session:
+        session.add(
+            CatalogRun(
+                id=run_id,
+                trigger="manual",
+                schedule_key=None,
+                started_at=now,
+                status="running",
+                attempt_count=1,
+            )
+        )
+
+    stopped = threading.Event()
+
+    class StopsBetweenChunks(httpx.SyncByteStream):
+        def __iter__(self):
+            body = gzip.compress(b'{"version":"v"}')
+            yield body[:8]
+            stopped.set()
+            yield body[8:]
+
+    def respond(request):
+        return httpx.Response(200, stream=StopsBetweenChunks())
+
+    execute_run(
+        factory,
+        run_id,
+        now=now,
+        client_factory=lambda: httpx.Client(transport=httpx.MockTransport(respond)),
+        stopped=stopped,
+    )
+
+    with factory() as session:
+        run = session.get(CatalogRun, run_id)
+        assert run.status == "interrupted"
+        assert run.finished_at is None
+        assert run.error_code == "interrupted"
+    recovered = recover_abandoned_run(factory, now)
+    assert recovered is not None and recovered.run_id == run_id
+    with factory() as session:
+        run = session.get(CatalogRun, run_id)
+        assert run.attempt_count == 2
+        assert run.status == "running"
     engine.dispose()

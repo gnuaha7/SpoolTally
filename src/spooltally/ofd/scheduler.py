@@ -4,12 +4,15 @@ import asyncio
 import fcntl
 import hashlib
 import json
+import logging
+import re
 import zlib
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from datetime import time as wall_time
 from pathlib import Path
 from typing import Any, Literal, cast
+from urllib.parse import quote
 from uuid import uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -28,6 +31,8 @@ from spooltally.ofd.schemas import SOURCE_SCHEMA_NAMES
 BULK_URL = "https://api.openfilamentdatabase.org/json/all.json.gz"
 MAX_COMPRESSED = 20_000_000
 MAX_EXPANDED = 100_000_000
+_SAFE_SCHEMA_FILE = re.compile(r"^[A-Za-z0-9_-]+\.json$")
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -129,41 +134,59 @@ def recover_abandoned_run(
     with factory() as session:
         with session.begin():
             session.connection(execution_options={"sqlite_begin_mode": "IMMEDIATE"})
-            run = _active(session)
+            run = session.scalar(
+                select(CatalogRun)
+                .where(CatalogRun.status.in_(("running", "interrupted")))
+                .order_by(CatalogRun.started_at)
+            )
             if run is None:
                 return None
             run.attempt_count += 1
             run.started_at = now
+            run.status = "running"
+            run.finished_at = None
+            run.error_code = None
             return RunClaim(run.id, True)
 
 
-def _get_json(client: httpx.Client, url: str) -> bytes:
+def _ensure_running(stopped) -> None:
+    if stopped is not None and stopped.is_set():
+        raise ValueError("interrupted")
+
+
+def _get_json(client: httpx.Client, url: str, stopped=None) -> bytes:
+    _ensure_running(stopped)
     response = client.get(url)
     response.raise_for_status()
     return response.content
 
 
-def _bounded_source(client: httpx.Client) -> tuple[bytes, bytes, str]:
+def _bounded_source(client: httpx.Client, stopped=None) -> tuple[bytes, bytes, str]:
     with client.stream("GET", BULK_URL) as response:
         response.raise_for_status()
         compressed = bytearray()
         inflater = zlib.decompressobj(16 + zlib.MAX_WBITS)
         expanded = bytearray()
         try:
-            for chunk in response.iter_bytes(64 * 1024):
+            for chunk in response.iter_raw():
+                _ensure_running(stopped)
                 compressed.extend(chunk)
                 if len(compressed) > MAX_COMPRESSED:
                     raise ValueError("download_limit_exceeded")
                 remaining = MAX_EXPANDED + 1 - len(expanded)
                 expanded.extend(inflater.decompress(chunk, remaining))
+                if len(expanded) > MAX_EXPANDED:
+                    raise ValueError("download_limit_exceeded")
                 while inflater.unconsumed_tail:
                     remaining = MAX_EXPANDED + 1 - len(expanded)
+                    if remaining <= 0:
+                        raise ValueError("download_limit_exceeded")
                     expanded.extend(
                         inflater.decompress(inflater.unconsumed_tail, remaining)
                     )
-                if len(expanded) > MAX_EXPANDED:
-                    raise ValueError("download_limit_exceeded")
-            expanded.extend(inflater.flush(MAX_EXPANDED + 1 - len(expanded)))
+                    if len(expanded) > MAX_EXPANDED:
+                        raise ValueError("download_limit_exceeded")
+            expanded.extend(inflater.flush(max(1, MAX_EXPANDED + 1 - len(expanded))))
             if len(expanded) > MAX_EXPANDED:
                 raise ValueError("download_limit_exceeded")
             if not inflater.eof or inflater.unused_data:
@@ -177,43 +200,47 @@ def _bounded_source(client: httpx.Client) -> tuple[bytes, bytes, str]:
     return bytes(expanded), bytes(compressed), version
 
 
-def _schema_documents(client: httpx.Client) -> dict[str, bytes]:
+def _schema_documents(client: httpx.Client, stopped=None) -> dict[str, bytes]:
     root = "https://api.openfilamentdatabase.org/api/v1/schemas/"
-    index = json.loads(_get_json(client, root + "index.json"))
+    index = json.loads(_get_json(client, root + "index.json", stopped))
+    if not isinstance(index, dict) or not isinstance(index.get("schemas"), list):
+        raise ValueError("invalid_schema_index")
     names = set(SOURCE_SCHEMA_NAMES)
-    entries = index.get("schemas", index) if isinstance(index, dict) else None
-    if isinstance(entries, dict):
-        for key, value in entries.items():
-            candidate = value if isinstance(value, str) else key
-            if isinstance(value, dict):
-                candidate = value.get("name", value.get("filename", key))
-            if isinstance(candidate, str) and Path(candidate).name == candidate:
-                names.add(candidate.removesuffix(".json"))
-    elif isinstance(entries, list):
-        for entry in entries:
-            candidate = entry.get("name") if isinstance(entry, dict) else entry
-            if isinstance(candidate, str) and Path(candidate).name == candidate:
-                names.add(candidate.removesuffix(".json"))
-    return {name: _get_json(client, root + name + ".json") for name in sorted(names)}
+    for entry in index["schemas"]:
+        if not isinstance(entry, dict):
+            raise ValueError("invalid_schema_index")
+        candidate = entry.get("path") or entry.get("file")
+        if candidate is None:
+            continue
+        if not isinstance(candidate, str) or not _SAFE_SCHEMA_FILE.fullmatch(candidate):
+            raise ValueError("invalid_schema_index")
+        names.add(candidate.removesuffix(".json"))
+    return {
+        name: _get_json(client, root + name + ".json", stopped)
+        for name in sorted(names)
+    }
 
 
-def _logo_sources(client: httpx.Client, payload: dict[str, Any]) -> list[LogoSource]:
+def _logo_sources(
+    client: httpx.Client, payload: dict[str, Any], stopped=None
+) -> list[LogoSource]:
     result: list[LogoSource] = []
     for kind, collection in (("brand", "brands"), ("store", "stores")):
         try:
             index_data = json.loads(
                 _get_json(
                     client,
-                    f"https://api.openfilamentdatabase.org/api/v1/{collection}/logos/index.json",
+                    f"https://api.openfilamentdatabase.org/api/v1/{collection}/logo/index.json",
+                    stopped,
                 )
             )
         except (httpx.HTTPError, ValueError):
             continue
-        entries = (
-            index_data
-            if isinstance(index_data, list)
-            else index_data.get(collection, [])
-        )
+        if not isinstance(index_data, dict) or not isinstance(
+            index_data.get("logos"), list
+        ):
+            continue
+        entries = index_data["logos"]
         incoming = {
             str(row.get("id"))
             for row in payload.get(collection, [])
@@ -224,13 +251,15 @@ def _logo_sources(client: httpx.Client, payload: dict[str, Any]) -> list[LogoSou
             if not isinstance(entry, dict) or str(entry.get(owner_key)) not in incoming:
                 continue
             path = entry.get("path")
-            if not isinstance(path, str) or Path(path).name != path:
+            if not isinstance(path, str) or not _SAFE_SCHEMA_FILE.fullmatch(path):
                 continue
             try:
                 metadata = json.loads(
                     _get_json(
                         client,
-                        f"https://api.openfilamentdatabase.org/api/v1/{collection}/logos/{path}",
+                        "https://api.openfilamentdatabase.org/api/v1/"
+                        f"{collection}/logo/{quote(path, safe='')}",
+                        stopped,
                     )
                 )
                 result.append(
@@ -261,13 +290,12 @@ def execute_run(
         with client_factory() as client:
             if stopped and stopped.is_set():
                 raise ValueError("interrupted")
-            source, _compressed, version = _bounded_source(client)
+            source, _compressed, version = _bounded_source(client, stopped)
             payload = json.loads(source)
-            schemas = _schema_documents(client)
+            schemas = _schema_documents(client, stopped)
             logo_work = []
-            for logo in _logo_sources(client, payload):
-                if stopped and stopped.is_set():
-                    raise ValueError("interrupted")
+            for logo in _logo_sources(client, payload, stopped):
+                _ensure_running(stopped)
                 with factory() as session:
                     owner = session.scalar(
                         select(CatalogRecord).where(
@@ -314,14 +342,24 @@ def execute_run(
             with session.begin():
                 run = session.get(CatalogRun, run_id)
                 if run is not None and run.status == "running":
-                    run.status, run.finished_at, run.error_code = "failed", now, code
+                    if code == "interrupted":
+                        run.status = "interrupted"
+                        run.finished_at = None
+                        run.error_code = code
+                    else:
+                        run.status, run.finished_at, run.error_code = (
+                            "failed",
+                            now,
+                            code,
+                        )
 
 
 async def _poll(app, stop: asyncio.Event, lock_file):
     factory = app.state.session_factory
     try:
         zone = machine_timezone()
-    except ValueError:
+    except ValueError as exc:
+        logger.error("Catalog scheduler unavailable: %s", exc)
         return
     while not stop.is_set():
         now = app.state.clock()

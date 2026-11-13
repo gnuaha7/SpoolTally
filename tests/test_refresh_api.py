@@ -10,10 +10,12 @@ from uuid import UUID
 
 import httpx
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 from spooltally.api.app import create_app
 from spooltally.config import Settings
 from spooltally.db.models import (
+    Asset,
     Base,
     CatalogRun,
     CatalogScheduleState,
@@ -60,16 +62,84 @@ def test_manual_refresh_returns_durable_accepted_run(tmp_path):
     }
     schemas["trait_rules"] = (fixture_dir / "trait_rules.json").read_bytes()
 
+    png = b"\x89PNG\r\n\x1a\nfixture-image"
+    image_fail = [False]
+    image_requests = []
+
     def respond(request):
         if request.url.path.endswith("/json/all.json.gz"):
-            return httpx.Response(200, content=gzip.compress(bulk))
+            return httpx.Response(200, stream=httpx.ByteStream(gzip.compress(bulk)))
         if request.url.path.endswith("/schemas/index.json"):
-            return httpx.Response(200, json={"schemas": []})
+            return httpx.Response(
+                200,
+                json={
+                    "schemas": [
+                        {
+                            "name": name.removesuffix("_schema"),
+                            "file": f"{name}.json",
+                            "path": f"{name}.json",
+                        }
+                        for name in schemas
+                    ]
+                    + [
+                        {
+                            "name": "extra display",
+                            "file": "extra_schema.json",
+                            "path": "extra_schema.json",
+                        }
+                    ]
+                },
+            )
         if "/schemas/" in request.url.path:
             name = request.url.path.rsplit("/", 1)[-1].removesuffix(".json")
+            if name == "extra_schema":
+                return httpx.Response(200, json={})
             return httpx.Response(200, content=schemas[name])
-        if "/logos/index.json" in request.url.path:
-            return httpx.Response(200, json=[])
+        if request.url.path.endswith("/brands/logo/index.json"):
+            return httpx.Response(
+                200,
+                json={
+                    "count": 1,
+                    "logos": [
+                        {
+                            "id": "logo-1",
+                            "slug": "logo-1",
+                            "brand_id": "brand-a",
+                            "brand_name": "Example Brand",
+                            "path": "logo-1.json",
+                        }
+                    ],
+                },
+            )
+        if request.url.path.endswith("/stores/logo/index.json"):
+            return httpx.Response(200, json={"count": 0, "logos": []})
+        if request.url.path.endswith("/brands/logo/logo-1.json"):
+            return httpx.Response(
+                200,
+                json={
+                    "id": "logo-1",
+                    "slug": "logo-1",
+                    "brand_id": "brand-a",
+                    "brand_name": "Example Brand",
+                    "path": "logo-1.json",
+                    "filename": "logo.png",
+                    "extension": "png",
+                    "logo_file": "logo-1.png",
+                },
+            )
+        if request.url.path.endswith("/brands/logo/logo-1.png"):
+            image_requests.append(dict(request.headers))
+            if request.headers.get("if-none-match") == '"asset-v1"':
+                if image_fail[0]:
+                    return httpx.Response(503)
+                return httpx.Response(304)
+            if image_fail[0]:
+                return httpx.Response(503)
+            return httpx.Response(
+                200,
+                content=png,
+                headers={"Content-Type": "image/png", "ETag": '"asset-v1"'},
+            )
         return httpx.Response(404)
 
     app.state.client_factory = lambda: httpx.Client(
@@ -77,24 +147,52 @@ def test_manual_refresh_returns_durable_accepted_run(tmp_path):
     )
 
     with TestClient(app) as client:
-        response = client.post(
-            "/api/v1/refresh", headers={"Authorization": f"Bearer {token}"}
-        )
-        assert response.status_code == 202
-        run_id = response.json()["run_id"]
-        deadline = time.monotonic() + 5
-        while time.monotonic() < deadline:
-            with app.state.session_factory() as session:
-                run = session.get(CatalogRun, run_id)
-                if run.status != "running":
-                    break
-            time.sleep(0.01)
 
-    assert response.status_code == 202
-    run_id = response.json()["run_id"]
-    assert str(UUID(run_id)) == run_id
+        def refresh():
+            response = client.post(
+                "/api/v1/refresh", headers={"Authorization": f"Bearer {token}"}
+            )
+            assert response.status_code == 202
+            run_id = response.json()["run_id"]
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                with app.state.session_factory() as session:
+                    run = session.get(CatalogRun, run_id)
+                    if run.status != "running":
+                        break
+                time.sleep(0.01)
+            with app.state.session_factory() as session:
+                return run_id, session.get(CatalogRun, run_id).status
+
+        run_id, run_status = refresh()
+        assert run_status == "succeeded"
+        with app.state.session_factory() as session:
+            first_asset = session.scalar(select(Asset))
+            assert first_asset is not None
+            first_hash, first_blob = first_asset.sha256, first_asset.blob
+            assert first_blob == png
+            assert first_hash == hashlib.sha256(png).digest()
+
+        second_id, second_status = refresh()
+        assert second_status == "succeeded"
+        assert any(
+            headers.get("if-none-match") == '"asset-v1"' for headers in image_requests
+        )
+        with app.state.session_factory() as session:
+            second_asset = session.scalar(select(Asset))
+            assert (second_asset.sha256, second_asset.blob) == (first_hash, first_blob)
+
+        image_fail[0] = True
+        third_id, third_status = refresh()
+        assert third_status == "succeeded"
+        with app.state.session_factory() as session:
+            third_asset = session.scalar(select(Asset))
+            assert (third_asset.sha256, third_asset.blob) == (first_hash, first_blob)
+        assert len({run_id, second_id, third_id}) == 3
+
+    assert all(str(UUID(run_id)) == run_id for run_id in (run_id, second_id, third_id))
     with app.state.session_factory() as session:
-        run = session.get(CatalogRun, run_id)
+        run = session.get(CatalogRun, third_id)
         assert run is not None
         assert run.trigger == "manual"
         assert run.status == "succeeded"
