@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import UTC, datetime
 from pathlib import Path
 
+import httpx
 import pytest
-from sqlalchemy import create_engine, event, select
+from sqlalchemy import event, select
 from sqlalchemy.orm import Session
 
 from spooltally.db.models import (
@@ -18,9 +20,10 @@ from spooltally.db.models import (
     LocalFilament,
     LocalManufacturer,
 )
+from spooltally.db.session import create_engine
 from spooltally.ofd.adapter import AdapterError
 from spooltally.ofd.ingest import ingest_catalog
-from spooltally.ofd.logos import LogoResult, LogoSource
+from spooltally.ofd.logos import LogoResult, LogoSource, fetch_logo
 
 FIXTURES = Path(__file__).parent / "fixtures" / "ofd"
 PAYLOAD = json.loads((FIXTURES / "bulk.json").read_text())
@@ -34,10 +37,7 @@ NOW = datetime(2026, 1, 2, tzinfo=UTC)
 
 @pytest.fixture
 def engine(tmp_path):
-    value = create_engine(f"sqlite:///{tmp_path / 'ingest.sqlite3'}")
-    event.listen(
-        value, "connect", lambda conn, _: conn.execute("PRAGMA foreign_keys=ON")
-    )
+    value = create_engine(tmp_path / "ingest.sqlite3")
     Base.metadata.create_all(value)
     yield value
     value.dispose()
@@ -176,6 +176,7 @@ def test_absent_source_graph_and_logo_are_retained(engine):
         brand_id = session.scalar(
             select(CatalogRecord.id).where(CatalogRecord.kind == "brand")
         )
+        session.rollback()
         logo = session.scalar(select(Asset).where(Asset.source_record_id == brand_id))
         assert logo is not None and logo.blob == blob
         session.rollback()
@@ -317,3 +318,88 @@ def test_late_write_failure_rolls_back_catalog_schemas_asset_and_caller_row(engi
             assert session.scalar(select(CatalogRun.id)) is None
     finally:
         event.remove(CatalogRun, "before_insert", fail_run_insert)
+
+
+@pytest.mark.parametrize(
+    ("source_id", "not_modified"),
+    [("brand-a", False), ("not-in-catalog", False), ("not-in-catalog", True)],
+    ids=["malformed-owner", "absent-from-snapshot", "not-modified-absent-source"],
+)
+def test_non_downloaded_logos_do_not_block_catalog_refresh_or_replace_logo(
+    engine, source_id, not_modified
+):
+    logo_id = "example-logo"
+    source = LogoSource(
+        kind="brand",
+        source_id="brand-a",
+        index_entry={
+            "id": logo_id,
+            "slug": logo_id,
+            "brand_id": "brand-a",
+            "brand_name": "Example Brand",
+            "path": f"{logo_id}.json",
+        },
+        metadata={
+            "id": logo_id,
+            "slug": logo_id,
+            "brand_id": "brand-a",
+            "brand_name": "Example Brand",
+            "filename": f"{logo_id}.png",
+            "logo_file": f"{logo_id}.png",
+            "extension": "png",
+        },
+    )
+    blob = b"\x89PNG\r\n\x1a\nprior logo"
+    downloaded = LogoResult(
+        "downloaded",
+        "https://api.openfilamentdatabase.org/api/v1/brands/logo/example-logo.png",
+        {"index": source.index_entry, "metadata": source.metadata},
+        blob,
+        "image/png",
+        hashlib.sha256(blob).digest(),
+    )
+    changed = json.loads(json.dumps(PAYLOAD))
+    changed["filaments"][0]["name"] = "Refreshed PLA"
+
+    with Session(engine) as session:
+        with session.begin():
+            ingest_catalog(
+                session, PAYLOAD, SCHEMAS, fetched_at=NOW, logos=[(source, downloaded)]
+            )
+        brand_id = session.scalar(
+            select(CatalogRecord.id).where(CatalogRecord.kind == "brand")
+        )
+        session.rollback()
+
+        malformed = LogoSource(
+            kind="brand",
+            source_id=source_id,
+            index_entry={"id": "bad-logo", "slug": "bad-logo"},
+            metadata={"id": "bad-logo", "slug": "bad-logo", "extension": "png"},
+        )
+        if not_modified:
+            failed = LogoResult("not_modified", "", {})
+        else:
+            with httpx.Client() as client:
+                failed = fetch_logo(malformed, client)
+            assert failed.status == "failed"
+
+        with session.begin():
+            ingest_catalog(
+                session, changed, SCHEMAS, fetched_at=datetime(2026, 1, 3, tzinfo=UTC),
+                logos=[(malformed, failed)],
+            )
+
+        refreshed = session.scalar(
+            select(CatalogRecord).where(CatalogRecord.kind == "filament")
+        )
+        retained_logo = session.scalar(
+            select(Asset).where(Asset.source_record_id == brand_id)
+        )
+        assert refreshed.source_baseline_json["name"] == "Refreshed PLA"
+        assert retained_logo is not None
+        assert (retained_logo.blob, retained_logo.sha256) == (
+            blob,
+            hashlib.sha256(blob).digest(),
+        )
+        assert retained_logo.source_metadata_json["metadata"] == source.metadata

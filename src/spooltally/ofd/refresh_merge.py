@@ -98,6 +98,8 @@ def _persist_catalog(
             current.fetched_at = fetched_at
     session.flush()
     for source, result in logos:
+        if result.status != "downloaded":
+            continue
         value = next(
             value
             for value in adapted.records
