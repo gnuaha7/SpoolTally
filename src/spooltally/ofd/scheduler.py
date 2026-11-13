@@ -250,15 +250,20 @@ def _logo_sources(
         for entry in entries:
             if not isinstance(entry, dict) or str(entry.get(owner_key)) not in incoming:
                 continue
+            logo_id = entry.get("id")
             path = entry.get("path")
-            if not isinstance(path, str) or not _SAFE_SCHEMA_FILE.fullmatch(path):
+            if (
+                not isinstance(logo_id, str)
+                or not logo_id
+                or path != f"{logo_id}.json"
+            ):
                 continue
             try:
                 metadata = json.loads(
                     _get_json(
                         client,
                         "https://api.openfilamentdatabase.org/api/v1/"
-                        f"{collection}/logo/{quote(path, safe='')}",
+                        f"{collection}/logo/{quote(logo_id, safe='')}.json",
                         stopped,
                     )
                 )

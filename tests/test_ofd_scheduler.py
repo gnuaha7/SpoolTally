@@ -395,3 +395,60 @@ def test_stopped_refresh_is_interrupted_and_resumable(tmp_path):
         assert run.attempt_count == 2
         assert run.status == "running"
     engine.dispose()
+
+
+def test_logo_id_with_space_loads_encoded_metadata_and_asset():
+    from spooltally.ofd.logos import fetch_logo
+    from spooltally.ofd.scheduler import _logo_sources
+
+    logo_id = "22 Network_logo_png_c4319375"
+    requested = []
+    png = b"\x89PNG\r\n\x1a\nfixture-image"
+
+    def respond(request):
+        requested.append(request.url.raw_path.decode())
+        if request.url.path.endswith("/brands/logo/index.json"):
+            return httpx.Response(
+                200,
+                json={
+                    "logos": [
+                        {
+                            "id": logo_id,
+                            "slug": logo_id,
+                            "brand_id": "brand-1",
+                            "brand_name": "Example Brand",
+                            "path": f"{logo_id}.json",
+                        }
+                    ]
+                },
+            )
+        if request.url.path.endswith("/stores/logo/index.json"):
+            return httpx.Response(200, json={"logos": []})
+        if request.url.path.endswith("/logo/" + logo_id + ".json"):
+            return httpx.Response(
+                200,
+                json={
+                    "id": logo_id,
+                    "slug": logo_id,
+                    "brand_id": "brand-1",
+                    "brand_name": "Example Brand",
+                    "path": f"{logo_id}.json",
+                    "filename": "logo.png",
+                    "extension": "png",
+                    "logo_file": f"{logo_id}.png",
+                },
+            )
+        if request.url.path.endswith("/logo/" + logo_id + ".png"):
+            return httpx.Response(
+                200, content=png, headers={"Content-Type": "image/png"}
+            )
+        return httpx.Response(404)
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        logos = _logo_sources(client, {"brands": [{"id": "brand-1"}], "stores": []})
+        assert len(logos) == 1
+        result = fetch_logo(logos[0], client)
+
+    assert "/api/v1/brands/logo/22%20Network_logo_png_c4319375.json" in requested
+    assert result.status == "downloaded"
+    assert result.blob == png
