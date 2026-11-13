@@ -12,6 +12,7 @@ from spooltally.config import Settings
 from spooltally.db.models import (
     Base,
     CatalogRecord,
+    IdempotencyRecord,
     InventoryState,
     LocalFilament,
     LocalManufacturer,
@@ -385,3 +386,62 @@ def test_source_kinds_and_variant_parentage_are_checked(catalog_client):
     )
     assert projection.json()["effective_source_json"] == {"color": "red"}
     assert projection.json()["selected_variant_source_json"] == {"size": "1.75"}
+
+
+def test_missing_foreign_references_are_invalid_without_partial_writes(catalog_client):
+    client, auth, app = catalog_client
+    manufacturer = client.post(
+        "/api/v1/manufacturers",
+        json={"name": "Existing maker"},
+        headers=auth | {"Idempotency-Key": "reference-existing-maker"},
+    )
+    filament = client.post(
+        "/api/v1/filaments",
+        json={"manufacturer_id": manufacturer.json()["id"], "name": "Existing PLA"},
+        headers=auth | {"Idempotency-Key": "reference-existing-filament"},
+    )
+    missing_manufacturer_id = str(uuid4())
+
+    missing_target = client.get(f"/api/v1/filaments/{uuid4()}", headers=auth)
+    assert missing_target.status_code == 404
+
+    created = client.post(
+        "/api/v1/filaments",
+        json={
+            "manufacturer_id": missing_manufacturer_id,
+            "name": "Rejected PLA",
+        },
+        headers=auth | {"Idempotency-Key": "missing-foreign-post"},
+    )
+    assert created.status_code == 422
+
+    target_id = filament.json()["id"]
+    target_tag = filament.headers["etag"]
+    updated = client.patch(
+        f"/api/v1/filaments/{target_id}",
+        json={
+            "manufacturer_id": missing_manufacturer_id,
+            "name": "Must not persist",
+        },
+        headers=auth
+        | {"If-Match": target_tag, "Idempotency-Key": "missing-foreign-patch"},
+    )
+    assert updated.status_code == 422
+
+    with app.state.session_factory() as session:
+        persisted = session.get(LocalFilament, target_id)
+        assert persisted is not None
+        assert persisted.manufacturer_id == manufacturer.json()["id"]
+        assert persisted.source_filament_id is None
+        assert persisted.name == "Existing PLA"
+        assert persisted.revision == 1
+        assert session.scalar(
+            select(LocalFilament).where(LocalFilament.name == "Rejected PLA")
+        ) is None
+        assert session.scalars(
+            select(IdempotencyRecord).where(
+                IdempotencyRecord.key.in_(
+                    ("missing-foreign-post", "missing-foreign-patch")
+                )
+            )
+        ).all() == []

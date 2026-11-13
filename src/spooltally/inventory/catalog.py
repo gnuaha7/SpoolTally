@@ -12,7 +12,6 @@ def grams_to_mg(value: str) -> int:
     if not isinstance(value, str) or not _WEIGHT.fullmatch(value):
         raise ValueError("invalid weight")
     whole, dot, fraction = value.partition(".")
-    # Bound before integer conversion, including strings with huge digit counts.
     whole = whole.lstrip("0") or "0"
     if len(whole) > 16:
         raise ValueError("weight overflow")

@@ -228,6 +228,13 @@ def _find(session: Session, model: type, identifier: str):
     return row
 
 
+def _association(session: Session, model: type, identifier: str):
+    row = session.get(model, identifier)
+    if row is None:
+        raise _error(422)
+    return row
+
+
 def _source(
     session: Session, identifier: str | None, kind: str
 ) -> CatalogRecord | None:
@@ -400,7 +407,7 @@ async def create_filament(
         replay = get_replay(session, principal.token_id, key, digest)
         if replay:
             return _send(replay)
-        _find(session, LocalManufacturer, mid)
+        _association(session, LocalManufacturer, mid)
         _source(session, sid, "filament")
         variant = _source(session, vid, "variant")
         if variant and (sid is None or variant.parent_id != sid):
@@ -607,7 +614,7 @@ async def patch_filament(
         )
         for field, value in clean.items():
             desired[field] = value
-        _find(session, LocalManufacturer, desired["manufacturer_id"])
+        _association(session, LocalManufacturer, desired["manufacturer_id"])
         _source(session, desired["source_filament_id"], "filament")
         variant = (
             _source(session, desired["selected_variant_id"], "variant")
